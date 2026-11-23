@@ -1707,6 +1707,119 @@
     .viewer-bar-right {
       display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
     }
+
+    /* ===================== Global Table Freeze (First Row & First Col) + Resizable Columns ===================== */
+    .table-container,
+    .rule-table-wrapper,
+    .dr-table-scroll,
+    .dr-sec {
+      overflow: auto;
+      max-height: 75vh;
+    }
+    .dr-backlog-col .dr-table-scroll,
+    .dr-backlog-col {
+      max-height: none;
+    }
+    table thead {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+    table th:first-child:not([colspan]),
+    table th:first-child[colspan="1"],
+    table td:first-child:not([colspan]),
+    table td:first-child[colspan="1"] {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+    }
+    table thead th:first-child:not([colspan]),
+    table thead th:first-child[colspan="1"] {
+      z-index: 6;
+    }
+    /* Ensure opaque backgrounds on frozen first column cells */
+    table tbody td:first-child:not([colspan]),
+    table tbody td:first-child[colspan="1"] {
+      background: var(--card-bg);
+    }
+    .dr-table thead th {
+      background: #e2e8f0;
+    }
+    [data-theme="dark"] .dr-table thead th {
+      background: #334155;
+    }
+    .dr-table tbody td:first-child:not([colspan]),
+    .dr-table tbody td:first-child[colspan="1"] {
+      background: #ffffff;
+    }
+    [data-theme="dark"] .dr-table tbody td:first-child:not([colspan]),
+    [data-theme="dark"] .dr-table tbody td:first-child[colspan="1"] {
+      background: #0b1220;
+    }
+    .dr-table tr.dr-total td:first-child:not([colspan]),
+    .dr-table tr.dr-total td:first-child[colspan="1"],
+    table tbody tr.total-row td:first-child:not([colspan]),
+    table tbody tr.total-row td:first-child[colspan="1"] {
+      background: #f1f5f9;
+    }
+    [data-theme="dark"] .dr-table tr.dr-total td:first-child:not([colspan]),
+    [data-theme="dark"] .dr-table tr.dr-total td:first-child[colspan="1"],
+    [data-theme="dark"] table tbody tr.total-row td:first-child:not([colspan]),
+    [data-theme="dark"] table tbody tr.total-row td:first-child[colspan="1"] {
+      background: #1e293b;
+    }
+    #main-data-table thead tr.main-header th:first-child {
+      background: var(--header-bg);
+    }
+    #main-data-table thead tr.sub-header th:first-child {
+      background: var(--subheader-bg);
+    }
+    .rule-table thead th:first-child,
+    .history-table thead th:first-child {
+      background: var(--card-bg);
+    }
+    .source-table thead th:first-child {
+      background: var(--card-bg);
+    }
+    /* Resizable column handle */
+    table th {
+      position: relative;
+    }
+    table thead th:first-child:not([colspan]),
+    table thead th:first-child[colspan="1"] {
+      position: sticky;
+    }
+    .col-resizer {
+      position: absolute;
+      top: 0;
+      right: -3px;
+      width: 6px;
+      height: 100%;
+      cursor: col-resize;
+      user-select: none;
+      touch-action: none;
+      z-index: 8;
+    }
+    .col-resizer:hover,
+    .col-resizer.resizing {
+      background: rgba(37, 99, 235, 0.55);
+    }
+    /* Disable sticky & scroll clipping during PNG export */
+    .dr-exporting .table-container,
+    .dr-exporting .rule-table-wrapper,
+    .dr-exporting .dr-table-scroll,
+    .dr-exporting .dr-sec {
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    .dr-exporting table thead,
+    .dr-exporting table th,
+    .dr-exporting table td {
+      position: static !important;
+    }
+    .dr-exporting .col-resizer {
+      display: none !important;
+    }
     </style>
 </head>
 <body data-theme="light">
@@ -6376,6 +6489,7 @@
           client: s.clientNames.get(ck),
           code,
           driver: drvDisp,
+          rawDriver: rawDrv,
           remark,
           deadline
         };
@@ -6445,6 +6559,7 @@
           client: s.clientNames.get(ck),
           code,
           driver: drvDisp,
+          rawDriver: rawDrv,
           remark,
           deadline
         });
@@ -7226,7 +7341,7 @@
             `<button class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:0.35rem 0.7rem;" onclick="drExportImage()">\u2B07 Export Region Report</button>` +
             `<button class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:0.35rem 0.7rem;" onclick="drExportRegionExcel()">\uD83D\uDCE5 Export Region Excel</button>` +
             `<button class="btn btn-sm" style="font-size:0.78rem;padding:0.35rem 0.6rem;" onclick="toggleTheme()" title="Toggle Theme"><span class="js-theme-icon">${curThemeIcon}</span></button>`
-          : `<button class="btn btn-sm" style="font-size:0.78rem;padding:0.35rem 0.7rem;" onclick="drCopyAllStationLinks()">\uD83D\uDD17 Copy All Links</button>` +
+          : `<button class="btn btn-sm" style="font-size:0.78rem;padding:0.35rem 0.7rem;" onclick="drCopyViewLink('region')">\uD83D\uDD17 Region Link</button>` +
             `<button class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:0.35rem 0.7rem;" onclick="drExportImage()">\u2B07 Export Region Report</button>` +
             `<button class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:0.35rem 0.7rem;" onclick="drExportRegionExcel()">\uD83D\uDCE5 Export Region Excel</button>` +
             `<button class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:0.35rem 0.7rem;" onclick="drBatchExportHubReport()">\uD83D\uDDBC Batch Export Hub Report</button>` +
@@ -7604,6 +7719,8 @@
         s += `<div class="dr-toolbar-group" style="margin-left:auto;">`;
         if (isLockedDnr) {
           s += `<button class="btn btn-sm" style="padding:0.3rem 0.7rem;font-size:0.78rem;" onclick="appRefreshFromCloud()">\uD83D\uDD04 Refresh</button>`;
+        } else {
+          s += `<button class="btn btn-sm" style="padding:0.3rem 0.7rem;font-size:0.78rem;" onclick="drCopyViewLink('dnr')">&#128279; DNR Link</button>`;
         }
         s += `<button class="btn btn-primary btn-sm" style="padding:0.3rem 0.7rem;font-size:0.78rem;" onclick="drExportImage()">&#128248; Export PNG</button>`;
         if (isLockedDnr) {
@@ -7833,6 +7950,8 @@
         s += `<div class="dr-toolbar-group" style="margin-left:auto;">`;
         if (isLockedViewer) {
           s += `<button class="btn btn-sm" style="padding:0.3rem 0.7rem;font-size:0.78rem;" onclick="appRefreshFromCloud()">&#128260; Refresh</button>`;
+        } else {
+          s += `<button class="btn btn-sm" style="padding:0.3rem 0.7rem;font-size:0.78rem;" onclick="drCopyViewLink('backlog')">&#128279; Backlog Link</button>`;
         }
         s += `<button class="btn btn-primary btn-sm" style="padding:0.3rem 0.7rem;font-size:0.78rem;" onclick="drExportImage()">&#128248; Export PNG</button>`;
         if (isLockedViewer) {
@@ -7850,8 +7969,11 @@
       selectedList.forEach(st => {
         const sObj = C.st.get(st.key);
         if (!sObj) return;
-        selItems.push(...sObj.pending);
-        if (selPrevItems && sObj.pendingPrev) selPrevItems.push(...sObj.pendingPrev);
+        const stDisp = sObj.name || st.name || st.key;
+        sObj.pending.forEach(it => selItems.push(Object.assign({ _stName: stDisp }, it)));
+        if (selPrevItems && sObj.pendingPrev) {
+          sObj.pendingPrev.forEach(it => selPrevItems.push(Object.assign({ _stName: stDisp }, it)));
+        }
       });
 
       const stSummary = isAll
@@ -7868,58 +7990,142 @@
       }
 
       const dateDesc = (a, b) => (a === '' ? 1 : b === '' ? -1 : b.localeCompare(a));
-      const dateSort = rs => rs.sort((a, b) => dateDesc(a.key, b.key));
-      const dateColSort = cs => cs.sort(dateDesc);
-      const totalSort = rs => rs.sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
 
-      // Table 1: Driver x Last Scan Date (filter out empty / 0 / STR* drivers, merge by Driver)
-      const isDriverItem = p => Boolean(p.driver && p.driver !== '(blank)' && drValidDrv(p.driver));
-      const drvItems = selItems.filter(isDriverItem);
-      const prevDrvItems = selPrevItems ? selPrevItems.filter(isDriverItem) : null;
-      const drvNames = new Map();
-      drvItems.forEach(p => {
-        const dk = drKey(p.driver);
-        if (!drvNames.has(dk)) drvNames.set(dk, p.driver);
-      });
-      if (prevDrvItems) {
-        prevDrvItems.forEach(p => {
-          const dk = drKey(p.driver);
-          if (!drvNames.has(dk)) drvNames.set(dk, p.driver);
-        });
-      }
-      const mDrv = drMatrixHtml(
-        drvItems,
-        p => drKey(p.driver),
-        p => p.lastscan,
-        k => drvNames.get(k) || k,
-        'Driver',
-        totalSort,
-        prevDrvItems,
-        k => k ? drMD(k) : '-',
-        dateColSort,
-        { hideZeroCols: true }
-      );
-      h += `<div class="dr-sec">&#128663; Driver &times; Last Scan Date (${drvNames.size} driver(s) &middot; ${drvItems.length} parcel(s))</div>`;
-      h += mDrv || `<div class="dr-empty">No valid Driver backlog records (empty / STR* excluded)</div>`;
-
-      // Table 2: Last Scan Date x Last Scan Type
+      // Table 1 (Top): Last Scan Date x Last Scan Type + Top 3 Stations per Date
       const typeCounts = new Map();
       selItems.forEach(p => typeCounts.set(p.type, (typeCounts.get(p.type) || 0) + 1));
-      const typeColSort = cs => cs.sort((a, b) => (typeCounts.get(b) || 0) - (typeCounts.get(a) || 0) || a.localeCompare(b));
-      const mScanType = drMatrixHtml(
-        selItems,
-        p => p.lastscan,
-        p => p.type,
-        k => k ? drMD(k) : '-',
-        'Last Scan Date',
-        dateSort,
-        selPrevItems,
-        null,
-        typeColSort,
-        { hideZeroCols: true }
-      );
+      const scanTypes = Array.from(typeCounts.keys()).sort((a, b) => (typeCounts.get(b) || 0) - (typeCounts.get(a) || 0) || a.localeCompare(b));
+      const dateSet = new Set(selItems.map(p => p.lastscan));
+      if (selPrevItems) selPrevItems.forEach(p => dateSet.add(p.lastscan));
+      const scanDates = Array.from(dateSet).sort(dateDesc);
+
+      const dateRows = new Map();
+      const typeColTot = {};
+      const prevTypeColTot = {};
+      const typeColItems = {};
+      scanTypes.forEach(t => { typeColTot[t] = 0; prevTypeColTot[t] = 0; typeColItems[t] = []; });
+      let grandScan = 0, prevGrandScan = 0;
+
+      selItems.forEach(p => {
+        const dt = p.lastscan;
+        if (!dateRows.has(dt)) dateRows.set(dt, { key: dt, cells: {}, cellItems: {}, items: [], total: 0, prevTotal: 0, stMap: new Map() });
+        const r = dateRows.get(dt);
+        r.cells[p.type] = (r.cells[p.type] || 0) + 1;
+        if (!r.cellItems[p.type]) r.cellItems[p.type] = [];
+        r.cellItems[p.type].push(p);
+        r.items.push(p);
+        r.total++;
+        typeColTot[p.type] = (typeColTot[p.type] || 0) + 1;
+        if (!typeColItems[p.type]) typeColItems[p.type] = [];
+        typeColItems[p.type].push(p);
+        grandScan++;
+        const stN = p._stName || p.station || '-';
+        if (!r.stMap.has(stN)) r.stMap.set(stN, []);
+        r.stMap.get(stN).push(p);
+      });
+      if (selPrevItems) {
+        selPrevItems.forEach(p => {
+          const dt = p.lastscan;
+          if (!dateRows.has(dt)) dateRows.set(dt, { key: dt, cells: {}, cellItems: {}, items: [], total: 0, prevTotal: 0, stMap: new Map() });
+          dateRows.get(dt).prevTotal++;
+          prevTypeColTot[p.type] = (prevTypeColTot[p.type] || 0) + 1;
+          prevGrandScan++;
+        });
+      }
+
+      let t1 = `<table class="dr-table"><thead><tr><th class="l">Last Scan Date</th><th class="dr-col-num">Total</th>${scanTypes.map(t => `<th>${drEsc(t)}</th>`).join('')}<th class="l">Top 3 Stations</th></tr></thead><tbody>`;
+      const hasCmp = Boolean(selPrevItems);
+      t1 += `<tr class="dr-total"><td class="l">Total</td><td>${drDrillWrap(grandScan, `Last Scan Date · Total (${grandScan})`, selItems, 'pending')}${hasCmp ? drDiffHtml(grandScan, prevGrandScan) : ''}</td>${scanTypes.map(t => `<td>${drDrillWrap(typeColTot[t], `${t} (${typeColTot[t]})`, typeColItems[t], 'pending')}${hasCmp ? drDiffHtml(typeColTot[t], prevTypeColTot[t] || 0) : ''}</td>`).join('')}<td class="l">-</td></tr>`;
+      scanDates.forEach(dt => {
+        const r = dateRows.get(dt);
+        if (!r) return;
+        const dtLbl = dt ? drMD(dt) : '-';
+        const rDiff = hasCmp ? drDiffHtml(r.total, r.prevTotal) : '';
+        const top3 = Array.from(r.stMap.entries())
+          .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+          .slice(0, 3);
+        const top3Html = top3.length
+          ? `${drEsc(dtLbl)}: ` + top3.map(([stN, stItems]) => drDrillWrap(`${stN}(${stItems.length})`, `${dtLbl} · ${stN} (${stItems.length})`, stItems, 'pending')).join(', ')
+          : '-';
+        t1 += `<tr><td class="l">${drEsc(dtLbl)}</td><td><b>${drDrillWrap(r.total, `Last Scan Date: ${dtLbl} (${r.total})`, r.items, 'pending')}</b>${rDiff}</td>${scanTypes.map(t => r.cells[t] ? `<td>${drDrillWrap(r.cells[t], `${dtLbl} · ${t} (${r.cells[t]})`, r.cellItems[t], 'pending')}</td>` : '<td class="dr-zero"></td>').join('')}<td class="l">${top3Html}</td></tr>`;
+      });
+      t1 += `</tbody></table>`;
       h += `<div class="dr-sec">&#128230; Last Scan Date &times; Last Scan Type (${selItems.length} parcel(s))</div>`;
-      h += mScanType || `<div class="dr-empty">No Last Scan Date &times; Last Scan Type records</div>`;
+      h += t1;
+
+      // Table 2 (Bottom): Driver x Last Scan Date (all values shown; empty/0 driver falls back to Last Scan Type; Station column after Driver; merged by Driver)
+      const getDrvLabel = p => {
+        const raw = drTxt(p.rawDriver !== undefined ? p.rawDriver : (p.driver === '(blank)' ? '' : p.driver));
+        return (raw && raw !== '0') ? raw : (p.type || '(blank)');
+      };
+      const drvRowsMap = new Map();
+      const drvDateSet = new Set();
+      const drvColTot = {};
+      const prevDrvColTot = {};
+      const drvColItems = {};
+      let grandDrv = 0, prevGrandDrv = 0;
+
+      selItems.forEach(p => {
+        const lbl = getDrvLabel(p);
+        const dk = drKey(lbl);
+        const dt = p.lastscan;
+        drvDateSet.add(dt);
+        if (!drvRowsMap.has(dk)) {
+          drvRowsMap.set(dk, { key: dk, label: lbl, stations: new Map(), cells: {}, cellItems: {}, items: [], total: 0, prevTotal: 0 });
+        }
+        const r = drvRowsMap.get(dk);
+        const stN = p._stName || p.station || '-';
+        r.stations.set(stN, (r.stations.get(stN) || 0) + 1);
+        r.cells[dt] = (r.cells[dt] || 0) + 1;
+        if (!r.cellItems[dt]) r.cellItems[dt] = [];
+        r.cellItems[dt].push(p);
+        r.items.push(p);
+        r.total++;
+        drvColTot[dt] = (drvColTot[dt] || 0) + 1;
+        if (!drvColItems[dt]) drvColItems[dt] = [];
+        drvColItems[dt].push(p);
+        grandDrv++;
+      });
+      if (selPrevItems) {
+        selPrevItems.forEach(p => {
+          const lbl = getDrvLabel(p);
+          const dk = drKey(lbl);
+          const dt = p.lastscan;
+          drvDateSet.add(dt);
+          if (!drvRowsMap.has(dk)) {
+            drvRowsMap.set(dk, { key: dk, label: lbl, stations: new Map(), cells: {}, cellItems: {}, items: [], total: 0, prevTotal: 0 });
+          }
+          const r = drvRowsMap.get(dk);
+          const stN = p._stName || p.station || '-';
+          if (!r.stations.has(stN)) r.stations.set(stN, 0);
+          r.prevTotal++;
+          prevDrvColTot[dt] = (prevDrvColTot[dt] || 0) + 1;
+          prevGrandDrv++;
+        });
+      }
+
+      const drvDates = Array.from(drvDateSet).filter(dt => (drvColTot[dt] || 0) > 0).sort(dateDesc);
+      const drvList = Array.from(drvRowsMap.values()).sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+
+      let t2 = `<table class="dr-table"><thead><tr><th class="l">Driver</th><th class="l">Station</th><th class="dr-col-num">Total</th>${drvDates.map(dt => `<th>${drEsc(dt ? drMD(dt) : '-')}</th>`).join('')}</tr></thead><tbody>`;
+      t2 += `<tr class="dr-total"><td class="l">Total</td><td class="l">-</td><td>${drDrillWrap(grandDrv, `Driver · Total (${grandDrv})`, selItems, 'pending')}${hasCmp ? drDiffHtml(grandDrv, prevGrandDrv) : ''}</td>${drvDates.map(dt => {
+        const dtLbl = dt ? drMD(dt) : '-';
+        return `<td>${drDrillWrap(drvColTot[dt] || 0, `Driver · ${dtLbl} (${drvColTot[dt] || 0})`, drvColItems[dt] || [], 'pending')}${hasCmp ? drDiffHtml(drvColTot[dt] || 0, prevDrvColTot[dt] || 0) : ''}</td>`;
+      }).join('')}</tr>`;
+      drvList.forEach(r => {
+        const stText = Array.from(r.stations.entries())
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(e => e[0])
+          .join(', ');
+        const rDiff = hasCmp ? drDiffHtml(r.total, r.prevTotal) : '';
+        t2 += `<tr><td class="l">${drEsc(r.label)}</td><td class="l">${drEsc(stText || '-')}</td><td><b>${drDrillWrap(r.total, `Driver: ${r.label} (${r.total})`, r.items, 'pending')}</b>${rDiff}</td>${drvDates.map(dt => {
+          const dtLbl = dt ? drMD(dt) : '-';
+          return r.cells[dt] ? `<td>${drDrillWrap(r.cells[dt], `Driver: ${r.label} · ${dtLbl} (${r.cells[dt]})`, r.cellItems[dt], 'pending')}</td>` : '<td class="dr-zero"></td>';
+        }).join('')}</tr>`;
+      });
+      t2 += `</tbody></table>`;
+      h += `<div class="dr-sec">&#128663; Driver &times; Last Scan Date (${drvList.length} driver(s) &middot; ${selItems.length} parcel(s))</div>`;
+      h += t2;
 
       frame.innerHTML = h;
     }
@@ -9446,7 +9652,150 @@
     }
 
   // --- 9. Initial Load & Setup ---
+    // ---- Global Table Freeze Wrapper & Resizable Columns ----
+    function initTableResizeFor(table) {
+      if (!table || table.dataset.noResize === '1') return;
+      // Ensure every table has a scroll container for sticky header + sticky first column
+      const parent = table.parentElement;
+      if (parent && !parent.classList.contains('table-container') &&
+          !parent.classList.contains('rule-table-wrapper') &&
+          !parent.classList.contains('source-table-wrap') &&
+          !parent.classList.contains('dr-sec') &&
+          !parent.classList.contains('dr-table-scroll') &&
+          !parent.classList.contains('dr-backlog-col')) {
+        const wrap = document.createElement('div');
+        wrap.className = 'dr-table-scroll';
+        parent.insertBefore(wrap, table);
+        wrap.appendChild(table);
+      }
+
+      const thead = table.tHead;
+      if (!thead || !thead.rows.length) return;
+
+      // Map each header cell (colSpan === 1) to its visual column index
+      const grid = [];
+      const leafMap = [];
+      for (let r = 0; r < thead.rows.length; r++) {
+        if (!grid[r]) grid[r] = [];
+        let cIdx = 0;
+        const cells = thead.rows[r].cells;
+        for (let i = 0; i < cells.length; i++) {
+          while (grid[r][cIdx]) cIdx++;
+          const cell = cells[i];
+          const rs = cell.rowSpan || 1;
+          const cs = cell.colSpan || 1;
+          for (let rr = r; rr < r + rs; rr++) {
+            if (!grid[rr]) grid[rr] = [];
+            for (let cc = cIdx; cc < cIdx + cs; cc++) {
+              grid[rr][cc] = cell;
+            }
+          }
+          if (cs === 1) {
+            leafMap.push({ cell, colIdx: cIdx });
+          }
+          cIdx += cs;
+        }
+      }
+
+      leafMap.forEach(({ cell, colIdx }) => {
+        if (cell.querySelector(':scope > .col-resizer')) return;
+        const resizer = document.createElement('div');
+        resizer.className = 'col-resizer';
+        resizer.title = 'Drag to resize column (double-click to reset)';
+
+        resizer.addEventListener('click', e => {
+          e.preventDefault();
+          e.stopPropagation();
+        });
+
+        resizer.addEventListener('dblclick', e => {
+          e.preventDefault();
+          e.stopPropagation();
+          const cg = table.querySelector('colgroup[data-resized="1"]');
+          if (cg) cg.remove();
+          table.style.tableLayout = '';
+          table.style.width = '';
+          Array.from(table.querySelectorAll('th')).forEach(th => { th.style.width = ''; });
+        });
+
+        resizer.addEventListener('pointerdown', e => {
+          if (e.button !== 0 && e.pointerType === 'mouse') return;
+          e.preventDefault();
+          e.stopPropagation();
+
+          // Snapshot all column widths on first resize
+          let cg = table.querySelector('colgroup[data-resized="1"]');
+          const lastRowGrid = grid[thead.rows.length - 1] || [];
+          const colCount = lastRowGrid.length || (thead.rows[0] ? thead.rows[0].cells.length : 0);
+          if (!cg && colCount > 0) {
+            cg = document.createElement('colgroup');
+            cg.setAttribute('data-resized', '1');
+            let totalW = 0;
+            for (let k = 0; k < colCount; k++) {
+              const refTh = lastRowGrid[k];
+              const w = refTh ? Math.max(28, Math.round(refTh.getBoundingClientRect().width)) : 60;
+              const colEl = document.createElement('col');
+              colEl.style.width = w + 'px';
+              cg.appendChild(colEl);
+              totalW += w;
+            }
+            table.insertBefore(cg, table.firstChild);
+            table.style.tableLayout = 'fixed';
+            table.style.width = totalW + 'px';
+          }
+
+          const cols = cg ? cg.children : [];
+          const targetCol = cols[colIdx];
+          if (!targetCol) return;
+
+          const startX = e.clientX;
+          const startColW = parseFloat(targetCol.style.width) || cell.getBoundingClientRect().width;
+          const startTableW = parseFloat(table.style.width) || table.getBoundingClientRect().width;
+          resizer.classList.add('resizing');
+
+          const onMove = ev => {
+            const dx = ev.clientX - startX;
+            const nextW = Math.max(28, Math.round(startColW + dx));
+            const diff = nextW - startColW;
+            targetCol.style.width = nextW + 'px';
+            cell.style.width = nextW + 'px';
+            table.style.width = Math.max(100, Math.round(startTableW + diff)) + 'px';
+          };
+
+          const onUp = () => {
+            resizer.classList.remove('resizing');
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+          };
+
+          window.addEventListener('pointermove', onMove);
+          window.addEventListener('pointerup', onUp);
+          window.addEventListener('pointercancel', onUp);
+        });
+
+        cell.appendChild(resizer);
+      });
+    }
+
+    function initGlobalTableFreezeAndResize() {
+      const scanAll = () => {
+        document.querySelectorAll('table').forEach(initTableResizeFor);
+      };
+      scanAll();
+      let rafId = null;
+      const obs = new MutationObserver(() => {
+        if (rafId) return;
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          scanAll();
+        });
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
+      initGlobalTableFreezeAndResize();
       // Set up drag & drop for Rank upload zone (inside Data Center)
       const dropZone = document.getElementById('drop-zone');
       if (dropZone) {
