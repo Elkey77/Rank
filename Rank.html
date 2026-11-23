@@ -8184,7 +8184,7 @@
       }
     }
 
-    async function ghCreateOrphanBranchWithFile(cfg, base64Content, commitMsg) {
+    async function ghUpsertOrphanBranchWithFile(cfg, base64Content, commitMsg, branchExists) {
       const apiBase = `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}`;
       const jsonHdr = ghHeaders(cfg.token, { 'Content-Type': 'application/json' });
 
@@ -8196,7 +8196,7 @@
       if (!blobRes.ok) throw new Error(`Create blob failed (${blobRes.status})`);
       const blob = await blobRes.json();
 
-      // 2. Create Tree
+      // 2. Create Tree (single latest file only)
       const treeRes = await fetch(`${apiBase}/git/trees`, {
         method: 'POST', headers: jsonHdr,
         body: JSON.stringify({
@@ -8206,7 +8206,7 @@
       if (!treeRes.ok) throw new Error(`Create tree failed (${treeRes.status})`);
       const tree = await treeRes.json();
 
-      // 3. Create Orphan Commit (parents: [])
+      // 3. Create Orphan Commit (parents: [] -> keeps branch at 1 commit with no history growth)
       const commitRes = await fetch(`${apiBase}/git/commits`, {
         method: 'POST', headers: jsonHdr,
         body: JSON.stringify({ message: commitMsg, tree: tree.sha, parents: [] })
@@ -8214,35 +8214,21 @@
       if (!commitRes.ok) throw new Error(`Create commit failed (${commitRes.status})`);
       const commit = await commitRes.json();
 
-      // 4. Create Ref refs/heads/<branch>
-      const refRes = await fetch(`${apiBase}/git/refs`, {
-        method: 'POST', headers: jsonHdr,
-        body: JSON.stringify({ ref: `refs/heads/${cfg.branch}`, sha: commit.sha })
-      });
+      // 4. Create or force-update Ref refs/heads/<branch>
+      const refRes = branchExists
+        ? await fetch(`${apiBase}/git/refs/heads/${encodeURIComponent(cfg.branch)}`, {
+            method: 'PATCH', headers: jsonHdr,
+            body: JSON.stringify({ sha: commit.sha, force: true })
+          })
+        : await fetch(`${apiBase}/git/refs`, {
+            method: 'POST', headers: jsonHdr,
+            body: JSON.stringify({ ref: `refs/heads/${cfg.branch}`, sha: commit.sha })
+          });
       if (!refRes.ok) {
         const err = await refRes.json().catch(() => ({}));
-        throw new Error(err.message || `Create branch "${cfg.branch}" failed (${refRes.status})`);
+        throw new Error(err.message || `${branchExists ? 'Force-update' : 'Create'} branch "${cfg.branch}" failed (${refRes.status})`);
       }
       return commit;
-    }
-
-    async function ghGetExistingFileSha(cfg) {
-      const apiBase = `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}`;
-      const parts = cfg.path.split('/');
-      const fileName = parts.pop();
-      const dirPath = parts.join('/');
-      const encDir = dirPath ? '/' + dirPath.split('/').map(encodeURIComponent).join('/') : '';
-      const res = await fetch(`${apiBase}/contents${encDir}?ref=${encodeURIComponent(cfg.branch)}`, {
-        headers: ghHeaders(cfg.token),
-        cache: 'no-store'
-      });
-      if (!res.ok) return null;
-      const list = await res.json();
-      if (Array.isArray(list)) {
-        const match = list.find(item => item && item.name === fileName);
-        return match ? match.sha : null;
-      }
-      return (list && list.sha) ? list.sha : null;
     }
 
     async function ghPublishData() {
@@ -8278,22 +8264,9 @@
         });
 
         if (refRes.status === 404) {
-          // Auto-create clean standalone orphan data branch
-          await ghCreateOrphanBranchWithFile(cfg, base64, commitMsg);
+          await ghUpsertOrphanBranchWithFile(cfg, base64, commitMsg, false);
         } else if (refRes.ok) {
-          const sha = await ghGetExistingFileSha(cfg);
-          const encPath = cfg.path.split('/').map(encodeURIComponent).join('/');
-          const bodyObj = { message: commitMsg, content: base64, branch: cfg.branch };
-          if (sha) bodyObj.sha = sha;
-          const putRes = await fetch(`${apiBase}/contents/${encPath}`, {
-            method: 'PUT',
-            headers: ghHeaders(cfg.token, { 'Content-Type': 'application/json' }),
-            body: JSON.stringify(bodyObj)
-          });
-          if (!putRes.ok) {
-            const errJson = await putRes.json().catch(() => ({}));
-            throw new Error(errJson.message || `GitHub PUT failed (${putRes.status})`);
-          }
+          await ghUpsertOrphanBranchWithFile(cfg, base64, commitMsg, true);
         } else {
           const errJson = await refRes.json().catch(() => ({}));
           throw new Error(errJson.message || `Cannot access repo (${refRes.status})`);
