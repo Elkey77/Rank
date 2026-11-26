@@ -1877,42 +1877,28 @@
 
     <!-- Core Report Frame (Target for Image Generation) -->
     <div id="report-frame" style="display: none;">
-      
-      <!-- Top 3 / Bottom 3 Dashboard Summary -->
-      <div class="top-bottom-grid">
-        <!-- Champions Box -->
-        <div class="card" id="top-card">
-          <div class="podium-header">
-            <span class="trophy-icon">🏆</span>
-            <span id="ui-top3-title">Top 3 Stations (Champions)</span>
-          </div>
-          <div class="podium-list" id="top-podium-list">
-            <!-- Populated dynamically -->
-          </div>
-        </div>
-
-        <!-- Attention Box -->
-        <div class="card" id="bottom-card">
-          <div class="podium-header">
-            <span class="trophy-icon">⚠️</span>
-            <span id="ui-bottom3-title">Bottom 3 Stations (Needs Attention)</span>
-          </div>
-          <div class="podium-list" id="bottom-attention-list">
-            <!-- Populated dynamically -->
-          </div>
-        </div>
-      </div>
 
       <!-- Main Sorted Datatable -->
       <div class="card" style="padding: 0; overflow: hidden;">
         <!-- Report Mode Selector -->
-        <div class="report-mode-bar">
+        <div class="report-mode-bar" style="flex-wrap:wrap; gap:0.6rem;">
           <label for="report-mode-select">Header:</label>
           <select id="report-mode-select" class="report-mode-select" onchange="onReportModeChange()">
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
             <option value="driver">Driver</option>
           </select>
+          <div id="daily-rank-controls" style="display:none; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <div style="display:inline-flex; gap:0.25rem;">
+              <button type="button" id="rank-view-single-btn" class="dr-pill active" onclick="setRankViewMode('single')">Date</button>
+              <button type="button" id="rank-view-daily-btn" class="dr-pill" onclick="setRankViewMode('daily')">Daily</button>
+            </div>
+            <select id="rank-date-select" class="report-mode-select" onchange="onRankDateChange(this.value)"></select>
+            <div id="rank-daily-dates-wrap" style="display:none; align-items:center; gap:0.3rem; flex-wrap:wrap;"></div>
+          </div>
+          <label id="rank-resp-label" class="dr-pill" style="display:none; align-items:center; gap:4px; cursor:pointer; margin-left:auto;">
+            <input type="checkbox" id="rank-resp-toggle" onchange="onRankRespToggle(this.checked)"> responsiblity
+          </label>
         </div>
         <div class="table-container">
           <table id="main-data-table">
@@ -1946,6 +1932,16 @@
             <tbody id="table-body">
               <!-- Dynamically Populated Rows -->
             </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- MonthRank Datatable -->
+      <div class="card" id="month-rank-card" style="padding: 0; overflow: hidden; display: none; margin-top: 1.25rem;">
+        <div class="table-container">
+          <table id="month-rank-table">
+            <thead id="month-rank-thead"></thead>
+            <tbody id="month-rank-body"></tbody>
           </table>
         </div>
       </div>
@@ -2326,6 +2322,14 @@
     // --- Source Data Drill-Down Modal & Main Rank Source Map ---
     let rankSourceMap = { lost: [], dnr: [] };
     let rankDrillBuckets = [];
+    let dailyRankBlocks = {};      // { 'YYYY-MM-DD': { date, subDates, stations, totalRow } }
+    let dailyRankDates = [];       // sorted ascending ['YYYY-MM-DD', ...]
+    let selectedRankDate = '';
+    let rankViewMode = 'single';   // 'single' | 'daily'
+    let selectedDailyDates = [];
+    let showRankRespCol = false;
+    let rankGroupMap = {};         // { normalizedStKey: 'responsiblity' }
+    let monthRankData = null;      // { title, headers, subDates, rows, totalRow }
     let activeSourceModalState = { title: '', rows: [], columns: [], filteredRows: [], sortKey: null, sortDir: 'asc' };
 
     const SOURCE_COLUMN_PRESETS = {
@@ -2350,6 +2354,7 @@
         { key: 'finalblame', label: 'Final Blame' },
         { key: 'pod', label: 'POD' },
         { key: 'system', label: 'System' },
+        { key: 'postcode', label: 'Postcode' },
         { key: 'times', label: 'Times' }
       ],
       deliverprocess: [
@@ -2382,6 +2387,7 @@
         { key: 'signedDate', label: 'SignedDate' },
         { key: 'finalblame', label: 'Final Blame' },
         { key: 'pod', label: 'POD' },
+        { key: 'postcode', label: 'Postcode' },
         { key: 'remark', label: 'Remark' }
       ]
     };
@@ -3793,8 +3799,8 @@
       if (elUploadPrompt) elUploadPrompt.innerText = 'Import Station / Driver Rank Excel';
       const elRankBtn = document.getElementById('ui-btn-import-rank'); if (elRankBtn) elRankBtn.innerText = getTranslation('btnImportRank');
       const elTodoBtn = document.getElementById('ui-btn-import-todo'); if (elTodoBtn) elTodoBtn.innerText = getTranslation('btnImportTodo');
-      document.getElementById('ui-top3-title').innerText = getTranslation('top3Title');
-      document.getElementById('ui-bottom3-title').innerText = getTranslation('bottom3Title');
+      const elTop3Title = document.getElementById('ui-top3-title'); if (elTop3Title) elTop3Title.innerText = getTranslation('top3Title');
+      const elBot3Title = document.getElementById('ui-bottom3-title'); if (elBot3Title) elBot3Title.innerText = getTranslation('bottom3Title');
       document.getElementById('ui-rules-title').innerText = getTranslation('rulesTitle');
 
       // Update Performance Analysis
@@ -3865,64 +3871,19 @@
       // Render Active Rules Tables
       renderStationRulesTable();
       renderDriverRulesTable();
+      renderDailyRankControls();
 
-      // Reset Table Thead for Station Layout
-      const thead = document.querySelector('#main-data-table thead');
-      if (thead) {
-        let bannerTitle = fileMeta.uploadedTitle;
-        if (!bannerTitle) {
-          bannerTitle = fileMeta.dateToday ? `${fileMeta.dateToday} STR Rank` : `STR Rank`;
-        }
-
-        if (fileMeta.hasSubheader) {
-          thead.innerHTML = `
-            <tr class="title-header" id="thead-title-row">
-              <th id="th-title-banner" colspan="9">${bannerTitle}</th>
-            </tr>
-            <tr class="main-header" id="thead-row-1">
-              <th rowspan="2" id="th-station">${getTranslation('stationCol')}</th>
-              <th rowspan="2" id="th-rank">${getTranslation('rankCol')}</th>
-              <th rowspan="2" id="th-score">${getTranslation('scoreCol')}</th>
-              <th id="th-dispatch-group">${getTranslation('dispatchGroup')}</th>
-              <th id="th-delivered-group">${getTranslation('deliveredGroup')}</th>
-              <th id="th-lost-cnt-group">${getTranslation('lostGroup')}</th>
-              <th id="th-lost-pct-group">${getTranslation('lostPctGroup')}</th>
-              <th id="th-dnr-cnt-group">${getTranslation('dnrGroup')}</th>
-              <th id="th-dnr-pct-group">${getTranslation('dnrPctGroup')}</th>
-            </tr>
-            <tr class="sub-header" id="thead-row-2">
-              <th id="th-dispatch-sub">${fileMeta.subDates.dispatch || ''}</th>
-              <th id="th-delivered-sub">${fileMeta.subDates.delivered || ''}</th>
-              <th id="th-lost-cnt-sub">${fileMeta.subDates.lostCnt || ''}</th>
-              <th id="th-lost-pct-sub">${fileMeta.subDates.lostPct || ''}</th>
-              <th id="th-dnr-cnt-sub">${fileMeta.subDates.dnrCnt || ''}</th>
-              <th id="th-dnr-pct-sub">${fileMeta.subDates.dnrPct || ''}</th>
-            </tr>
-          `;
-        } else {
-          thead.innerHTML = `
-            <tr class="title-header" id="thead-title-row">
-              <th id="th-title-banner" colspan="9">${bannerTitle}</th>
-            </tr>
-            <tr class="main-header" id="thead-row-1">
-              <th id="th-station">${getTranslation('stationCol')}</th>
-              <th id="th-rank">${getTranslation('rankCol')}</th>
-              <th id="th-score">${getTranslation('scoreCol')}</th>
-              <th id="th-dispatch-group">${getTranslation('dispatchGroup')}</th>
-              <th id="th-delivered-group">${getTranslation('deliveredGroup')}</th>
-              <th id="th-lost-cnt-group">${getTranslation('lostGroup')}</th>
-              <th id="th-lost-pct-group">${getTranslation('lostPctGroup')}</th>
-              <th id="th-dnr-cnt-group">${getTranslation('dnrGroup')}</th>
-              <th id="th-dnr-pct-group">${getTranslation('dnrPctGroup')}</th>
-            </tr>
-          `;
-        }
-      }
+      const hasMultiDaily = dailyRankDates.length > 0;
+      const isDailyMatrix = hasMultiDaily && rankViewMode === 'daily';
+      const showResp = showRankRespCol && Object.keys(rankGroupMap).length > 0;
+      const respColCount = showResp ? 1 : 0;
 
       // Update page header date label
       const dateLabelEl = document.getElementById('ui-report-date-label');
       if (dateLabelEl) {
-        if (fileMeta.uploadedTitle) {
+        if (hasMultiDaily && selectedRankDate) {
+          dateLabelEl.innerText = isDailyMatrix ? `Daily--STR--Rank` : `${selectedRankDate}--STR--Rank`;
+        } else if (fileMeta.uploadedTitle) {
           dateLabelEl.innerText = fileMeta.uploadedTitle.replace(/[\s\/~-]+/g, '--');
         } else if (fileMeta.dateToday) {
           dateLabelEl.innerText = `${fileMeta.dateToday}--STR--Rank`;
@@ -3931,21 +3892,135 @@
         }
       }
 
-      // Update table title row and analysis text
-      updateTableTitleRow();
+      // Update analysis text & tracking panel
       refreshAnalysisText();
-
-      // Populate tracking number panel with bottom-3 stations
       populateTrackingPanel();
 
       // Footer
       const footer = document.getElementById('ui-report-footer');
       footer.innerHTML = `<div>${getTranslation('footerGenerated')}</div><div>${getTranslation('footerRule')}</div>`;
 
+      const thead = document.querySelector('#main-data-table thead');
+      const tbody = document.getElementById('table-body');
+      if (!thead || !tbody) return;
+      tbody.innerHTML = '';
+
+      if (isDailyMatrix) {
+        const activeDates = selectedDailyDates.length ? selectedDailyDates : dailyRankDates;
+        const totalCols = 1 + respColCount + activeDates.length;
+        const bannerTitle = `${activeDates.length === 1 ? activeDates[0] : (activeDates[0] + ' ~ ' + activeDates[activeDates.length - 1])} Daily STR Rank`;
+        thead.innerHTML = `
+          <tr class="title-header" id="thead-title-row">
+            <th id="th-title-banner" colspan="${totalCols}">${drEsc(bannerTitle)}</th>
+          </tr>
+          <tr class="main-header" id="thead-row-1">
+            ${showResp ? '<th>responsiblity</th>' : ''}
+            <th id="th-station">${getTranslation('stationCol')}</th>
+            ${activeDates.map(dt => `<th>${drEsc(dt)}</th>`).join('')}
+          </tr>
+        `;
+        // Collect ordered station list from latest active date (fallback union)
+        const refDate = activeDates[activeDates.length - 1];
+        const refBlock = dailyRankBlocks[refDate];
+        const stationNames = [];
+        const seenSt = new Set();
+        if (refBlock && refBlock.stations) {
+          refBlock.stations.forEach(s => { const k = drStKey(s.Station); if (!seenSt.has(k)) { seenSt.add(k); stationNames.push(s.Station); } });
+        }
+        activeDates.forEach(dt => {
+          const blk = dailyRankBlocks[dt];
+          if (blk && blk.stations) {
+            blk.stations.forEach(s => { const k = drStKey(s.Station); if (!seenSt.has(k)) { seenSt.add(k); stationNames.push(s.Station); } });
+          }
+        });
+        stationNames.forEach(stName => {
+          const stK = drStKey(stName);
+          const tr = document.createElement('tr');
+          let rowHtml = '';
+          if (showResp) {
+            rowHtml += `<td style="text-align:left;font-size:0.82rem;">${drEsc(rankGroupMap[stK] || '-')}</td>`;
+          }
+          rowHtml += `<td style="font-weight:600;">${drEsc(stName)}</td>`;
+          activeDates.forEach(dt => {
+            const blk = dailyRankBlocks[dt];
+            const rec = blk && blk.stations ? blk.stations.find(x => drStKey(x.Station) === stK) : null;
+            if (!rec) {
+              rowHtml += `<td>-</td>`;
+            } else {
+              const imp = computeStationImpactMetric(rec);
+              const rankInt = !isNaN(parseInt(rec.rank, 10)) ? parseInt(rec.rank, 10) : rec.rank;
+              const diffHtml = getRankDifferHtml(stK, dt);
+              rowHtml += `<td style="line-height:1.35;">` +
+                `<div style="font-weight:700;">${rankInt}${diffHtml ? ' ' + diffHtml : ''}</div>` +
+                `<div style="font-size:0.78rem;color:var(--danger-text);white-space:nowrap;">${drEsc(imp.name)}:${drEsc(imp.valueStr)}</div>` +
+                `</td>`;
+            }
+          });
+          tr.innerHTML = rowHtml;
+          tbody.appendChild(tr);
+        });
+        renderMonthRankTable();
+        return;
+      }
+
+      // Single-Date / Legacy Station Table Thead
+      let bannerTitle = hasMultiDaily && selectedRankDate
+        ? `${selectedRankDate} STR Rank`
+        : (fileMeta.uploadedTitle || (fileMeta.dateToday ? `${fileMeta.dateToday} STR Rank` : `STR Rank`));
+      const totalCols = 9 + respColCount;
+
+      if (fileMeta.hasSubheader) {
+        thead.innerHTML = `
+          <tr class="title-header" id="thead-title-row">
+            <th id="th-title-banner" colspan="${totalCols}">${drEsc(bannerTitle)}</th>
+          </tr>
+          <tr class="main-header" id="thead-row-1">
+            ${showResp ? '<th rowspan="2">responsiblity</th>' : ''}
+            <th rowspan="2" id="th-station">${getTranslation('stationCol')}</th>
+            <th rowspan="2" id="th-rank">${getTranslation('rankCol')}</th>
+            <th rowspan="2" id="th-score">${getTranslation('scoreCol')}</th>
+            <th id="th-dispatch-group">${getTranslation('dispatchGroup')}</th>
+            <th id="th-delivered-group">${getTranslation('deliveredGroup')}</th>
+            <th id="th-lost-cnt-group">${getTranslation('lostGroup')}</th>
+            <th id="th-lost-pct-group">${getTranslation('lostPctGroup')}</th>
+            <th id="th-dnr-cnt-group">${getTranslation('dnrGroup')}</th>
+            <th id="th-dnr-pct-group">${getTranslation('dnrPctGroup')}</th>
+          </tr>
+          <tr class="sub-header" id="thead-row-2">
+            <th id="th-dispatch-sub">${drEsc(fileMeta.subDates.dispatch || '')}</th>
+            <th id="th-delivered-sub">${drEsc(fileMeta.subDates.delivered || '')}</th>
+            <th id="th-lost-cnt-sub">${drEsc(fileMeta.subDates.lostCnt || '')}</th>
+            <th id="th-lost-pct-sub">${drEsc(fileMeta.subDates.lostPct || '')}</th>
+            <th id="th-dnr-cnt-sub">${drEsc(fileMeta.subDates.dnrCnt || '')}</th>
+            <th id="th-dnr-pct-sub">${drEsc(fileMeta.subDates.dnrPct || '')}</th>
+          </tr>
+        `;
+      } else {
+        thead.innerHTML = `
+          <tr class="title-header" id="thead-title-row">
+            <th id="th-title-banner" colspan="${totalCols}">${drEsc(bannerTitle)}</th>
+          </tr>
+          <tr class="main-header" id="thead-row-1">
+            ${showResp ? '<th>responsiblity</th>' : ''}
+            <th id="th-station">${getTranslation('stationCol')}</th>
+            <th id="th-rank">${getTranslation('rankCol')}</th>
+            <th id="th-score">${getTranslation('scoreCol')}</th>
+            <th id="th-dispatch-group">${getTranslation('dispatchGroup')}</th>
+            <th id="th-delivered-group">${getTranslation('deliveredGroup')}</th>
+            <th id="th-lost-cnt-group">${getTranslation('lostGroup')}</th>
+            <th id="th-lost-pct-group">${getTranslation('lostPctGroup')}</th>
+            <th id="th-dnr-cnt-group">${getTranslation('dnrGroup')}</th>
+            <th id="th-dnr-pct-group">${getTranslation('dnrPctGroup')}</th>
+          </tr>
+        `;
+      }
+
+      if (!hasMultiDaily) updateTableTitleRow();
+
       // Filter and query logic
       let filteredData = [...currentStationsData];
 
-      // Sort a copy for Top 3 Podium and Bottom 3 Attention (sorted by Rank asc or Score desc)
+      // Determine Top 3 and Bottom 3 for inline station badges
       const sortedForPodium = [...currentStationsData].sort((a, b) => {
         const rA = parseInt(a.rank, 10);
         const rB = parseInt(b.rank, 10);
@@ -3954,85 +4029,21 @@
         const sB = typeof b.score === 'number' ? b.score : parseFloat(b.score) || 0;
         return sB - sA;
       });
-
-      // Render Podium Cards (Top 3)
-      const topPodiumList = document.getElementById('top-podium-list');
-      topPodiumList.innerHTML = '';
-      const top3 = sortedForPodium.slice(0, 3);
-      top3.forEach((s, idx) => {
-        let rankClass = 'podium-gold';
-        let trophy = '🥇';
-        if (idx === 1) { rankClass = 'podium-silver'; trophy = '🥈'; }
-        if (idx === 2) { rankClass = 'podium-bronze'; trophy = '🥉'; }
-
-        const displayScore = typeof s.score === 'number' ? s.score.toFixed(2) : s.score;
-
-        const card = document.createElement('div');
-        card.className = `podium-card`;
-        card.innerHTML = `
-          <div class="podium-left">
-            <div class="rank-badge ${rankClass}">${trophy}</div>
-            <div>
-              <div class="station-name">${s.Station}</div>
-            </div>
-          </div>
-          <div class="podium-score">${displayScore}</div>
-        `;
-        topPodiumList.appendChild(card);
-      });
-
-      // Render Attention Cards (Bottom 3)
-      const bottomAttentionList = document.getElementById('bottom-attention-list');
-      bottomAttentionList.innerHTML = '';
-      const bottom3 = [...sortedForPodium].reverse().slice(0, 3); // Reverse to get worst first
-      const bottom3Names = bottom3.map(b => b.Station);
-
-      bottom3.forEach((s, idx) => {
-        const card = document.createElement('div');
-        card.className = `podium-card`;
-        
-        let weakTextHtml = '';
-        if (s.weakMetrics.length > 0) {
-          weakTextHtml = `<div class="weak-indicators-list">` + 
-            s.weakMetrics.map(m => {
-              let displayVal = '';
-              let label = '';
-              if (m === 'dispatch') { displayVal = formatPercent(s.Dispatch); label = 'Dispatch%'; }
-              if (m === 'delivered') { displayVal = formatPercent(s.Delivered); label = '24h Delivered%'; }
-              if (m === 'lost') { displayVal = formatPercent(s.LostPercent); label = 'Lost%'; }
-              if (m === 'dnr') { displayVal = formatPercent(s.DNRPercent); label = 'DNR%'; }
-              return `<span class="weak-indicator-tag">${label}: ${displayVal}</span>`;
-            }).join(' ') + `</div>`;
-        }
-
-        const displayScore = typeof s.score === 'number' ? s.score.toFixed(2) : s.score;
-
-        card.innerHTML = `
-          <div class="podium-left">
-            <div class="rank-badge podium-attention">#${s.rank}</div>
-            <div>
-              <div class="station-name">${s.Station}</div>
-              ${weakTextHtml}
-            </div>
-          </div>
-          <div class="podium-score" style="color: var(--danger-text)">${displayScore}</div>
-        `;
-        bottomAttentionList.appendChild(card);
-      });
+      const bottom3Names = sortedForPodium.slice(-3).map(b => b.Station);
 
       // Render Table Rows in exact Excel sequence
-      const tbody = document.getElementById('table-body');
-      tbody.innerHTML = '';
-
       filteredData.forEach(s => {
         const tr = document.createElement('tr');
+        const rankInt = !isNaN(parseInt(s.rank, 10)) ? parseInt(s.rank, 10) : s.rank;
 
-        // Trophies for Top 3 and WeChat "Qiaoda" Frying Pan for Bottom 3 in main table
-        let rankHtml = s.rank;
-        if (s.rank === 1 || s.rank === '1') rankHtml = '🥇 1';
-        else if (s.rank === 2 || s.rank === '2') rankHtml = '🥈 2';
-        else if (s.rank === 3 || s.rank === '3') rankHtml = '🥉 3';
-        else if (bottom3Names.includes(s.Station)) rankHtml = `${getHammerIconSvg()} ${s.rank}`;
+        // Inline badge after Station name
+        let stBadge = '';
+        if (rankInt === 1) stBadge = ' 🥇';
+        else if (rankInt === 2) stBadge = ' 🥈';
+        else if (rankInt === 3) stBadge = ' 🥉';
+        else if (bottom3Names.includes(s.Station)) stBadge = ` ${getHammerIconSvg()}`;
+
+        const diffHtml = hasMultiDaily ? getRankDifferHtml(drStKey(s.Station), selectedRankDate) : '';
 
         // Weak highlights
         const dispatchClass = s.weakMetrics.includes('dispatch') ? 'cell-weak' : 'cell-value';
@@ -4041,16 +4052,19 @@
         const dnrPctClass = s.weakMetrics.includes('dnr') ? 'cell-weak' : 'cell-value';
 
         const displayScore = typeof s.score === 'number' ? s.score.toFixed(2) : s.score;
+        const lostInt = !isNaN(parseInt(s.LostCount, 10)) ? parseInt(s.LostCount, 10) : s.LostCount;
+        const dnrInt = !isNaN(parseInt(s.DNRCount, 10)) ? parseInt(s.DNRCount, 10) : s.DNRCount;
 
         tr.innerHTML = `
-          <td style="font-weight: 600;">${s.Station}</td>
-          <td style="font-weight: 700;">${rankHtml}</td>
+          ${showResp ? `<td style="text-align:left;font-size:0.82rem;">${drEsc(rankGroupMap[drStKey(s.Station)] || '-')}</td>` : ''}
+          <td style="font-weight: 600;">${drEsc(s.Station)}${stBadge}${diffHtml ? ' ' + diffHtml : ''}</td>
+          <td style="font-weight: 700;">${rankInt}</td>
           <td style="font-weight: 700; color: var(--primary);">${displayScore}</td>
           <td><span class="${dispatchClass}">${formatPercent(s.Dispatch)}</span></td>
           <td><span class="${deliveredClass}">${formatPercent(s.Delivered)}</span></td>
-          <td><span class="cell-value">${rankDrillHtml(s.LostCount, `${s.Station} · Lost (${s.LostCount})`, getRankStationRecords('lost', s.Station), 'rankLost')}</span></td>
+          <td><span class="cell-value">${rankDrillHtml(lostInt, `${s.Station} · Lost (${lostInt})`, getRankStationRecords('lost', s.Station), 'rankLost')}</span></td>
           <td><span class="${lostPctClass}">${formatPercent(s.LostPercent)}</span></td>
-          <td><span class="cell-value">${rankDrillHtml(s.DNRCount, `${s.Station} · DNR (${s.DNRCount})`, getRankStationRecords('dnr', s.Station), 'rankDnr')}</span></td>
+          <td><span class="cell-value">${rankDrillHtml(dnrInt, `${s.Station} · DNR (${dnrInt})`, getRankStationRecords('dnr', s.Station), 'rankDnr')}</span></td>
           <td><span class="${dnrPctClass}">${formatPercent(s.DNRPercent)}</span></td>
         `;
         tbody.appendChild(tr);
@@ -4060,19 +4074,198 @@
       if (currentTotalRow) {
         const totalTr = document.createElement('tr');
         totalTr.className = 'total-row';
+        const totLostInt = !isNaN(parseInt(currentTotalRow.LostCount, 10)) ? parseInt(currentTotalRow.LostCount, 10) : currentTotalRow.LostCount;
+        const totDnrInt = !isNaN(parseInt(currentTotalRow.DNRCount, 10)) ? parseInt(currentTotalRow.DNRCount, 10) : currentTotalRow.DNRCount;
         totalTr.innerHTML = `
+          ${showResp ? '<td>-</td>' : ''}
           <td>${currentLang === 'ar' ? getTranslation('totalLabel') : currentTotalRow.Station}</td>
           <td>-</td>
           <td>-</td>
           <td>${formatPercent(currentTotalRow.Dispatch)}</td>
           <td>${formatPercent(currentTotalRow.Delivered)}</td>
-          <td>${rankDrillHtml(currentTotalRow.LostCount, `Total · Lost (${currentTotalRow.LostCount})`, rankSourceMap.lost, 'rankLost')}</td>
+          <td>${rankDrillHtml(totLostInt, `Total · Lost (${totLostInt})`, rankSourceMap.lost, 'rankLost')}</td>
           <td>${formatPercent(currentTotalRow.LostPercent)}</td>
-          <td>${rankDrillHtml(currentTotalRow.DNRCount, `Total · DNR (${currentTotalRow.DNRCount})`, rankSourceMap.dnr, 'rankDnr')}</td>
+          <td>${rankDrillHtml(totDnrInt, `Total · DNR (${totDnrInt})`, rankSourceMap.dnr, 'rankDnr')}</td>
           <td>${formatPercent(currentTotalRow.DNRPercent)}</td>
         `;
         tbody.appendChild(totalTr);
       }
+
+      renderMonthRankTable();
+    }
+
+    function computeStationImpactMetric(s) {
+      const wDisp = KPI_RULES.dispatch.weight, tDisp = KPI_RULES.dispatch.target;
+      const wDel  = KPI_RULES.delivered.weight, tDel  = KPI_RULES.delivered.target;
+      const wLost = KPI_RULES.lost.weight,      tLost = KPI_RULES.lost.target;
+      const wDnr  = KPI_RULES.dnr.weight,       tDnr  = KPI_RULES.dnr.target;
+
+      const sDisp = (typeof s.Dispatch === 'number' && !isNaN(s.Dispatch) && tDisp > 0) ? Math.min(s.Dispatch / tDisp, 1.2) * wDisp : 0;
+      const sDel  = (typeof s.Delivered === 'number' && !isNaN(s.Delivered) && tDel > 0) ? Math.min(s.Delivered / tDel, 1.2) * wDel : 0;
+      const sLost = (typeof s.LostPercent === 'number' && !isNaN(s.LostPercent))
+        ? (s.LostPercent === 0 ? 1.2 * wLost : Math.min(tLost / s.LostPercent, 1.2) * wLost) : 0;
+      const sDnr  = (typeof s.DNRPercent === 'number' && !isNaN(s.DNRPercent))
+        ? (s.DNRPercent === 0 ? 1.2 * wDnr : Math.min(tDnr / s.DNRPercent, 1.2) * wDnr) : 0;
+
+      const metrics = [
+        { name: 'Dispatch%',      val: s.Dispatch,    score: sDisp, weight: wDisp, valueStr: formatPercent(s.Dispatch) },
+        { name: '24h Delivered%', val: s.Delivered,   score: sDel,  weight: wDel,  valueStr: formatPercent(s.Delivered) },
+        { name: 'Lost%',          val: s.LostPercent, score: sLost, weight: wLost, valueStr: formatPercent(s.LostPercent) },
+        { name: 'DNR%',           val: s.DNRPercent,  score: sDnr,  weight: wDnr,  valueStr: formatPercent(s.DNRPercent) }
+      ];
+      metrics.forEach(m => {
+        m.loss = m.weight - m.score;
+        m.capLoss = (1.2 * m.weight) - m.score;
+      });
+      metrics.sort((a, b) => (b.loss - a.loss) || (b.capLoss - a.capLoss));
+      return metrics[0];
+    }
+
+    function getRankDifferHtml(stKey, dateIso) {
+      const idx = dailyRankDates.indexOf(dateIso);
+      if (idx <= 0) return '';
+      const prevDate = dailyRankDates[idx - 1];
+      const curBlk = dailyRankBlocks[dateIso];
+      const prevBlk = dailyRankBlocks[prevDate];
+      if (!curBlk || !prevBlk) return '';
+      const curRec = curBlk.stations.find(x => drStKey(x.Station) === stKey);
+      const prevRec = prevBlk.stations.find(x => drStKey(x.Station) === stKey);
+      if (!curRec || !prevRec) return '';
+      const curR = parseInt(curRec.rank, 10);
+      const prevR = parseInt(prevRec.rank, 10);
+      if (isNaN(curR) || isNaN(prevR)) return '';
+      const diff = prevR - curR; // positive = rank improved (e.g. 5 -> 3 = +2)
+      if (diff > 0) return `<span style="color:#16a34a;font-size:0.78rem;font-weight:700;">↑${diff}</span>`;
+      if (diff < 0) return `<span style="color:#dc2626;font-size:0.78rem;font-weight:700;">↓${Math.abs(diff)}</span>`;
+      return `<span style="color:var(--text-muted);font-size:0.78rem;">→</span>`;
+    }
+
+    function renderDailyRankControls() {
+      const wrap = document.getElementById('daily-rank-controls');
+      const dateSel = document.getElementById('rank-date-select');
+      const dailyWrap = document.getElementById('rank-daily-dates-wrap');
+      const singleBtn = document.getElementById('rank-view-single-btn');
+      const dailyBtn = document.getElementById('rank-view-daily-btn');
+      const respLbl = document.getElementById('rank-resp-label');
+      const respChk = document.getElementById('rank-resp-toggle');
+
+      if (respLbl && respChk) {
+        const hasGroup = Object.keys(rankGroupMap).length > 0;
+        respLbl.style.display = hasGroup ? 'inline-flex' : 'none';
+        respChk.checked = Boolean(showRankRespCol);
+      }
+
+      if (!wrap) return;
+      if (!dailyRankDates.length) {
+        wrap.style.display = 'none';
+        return;
+      }
+      wrap.style.display = 'inline-flex';
+      if (singleBtn) singleBtn.classList.toggle('active', rankViewMode !== 'daily');
+      if (dailyBtn) dailyBtn.classList.toggle('active', rankViewMode === 'daily');
+
+      if (dateSel) {
+        dateSel.style.display = rankViewMode === 'daily' ? 'none' : '';
+        dateSel.innerHTML = dailyRankDates.map(dt =>
+          `<option value="${drEsc(dt)}"${dt === selectedRankDate ? ' selected' : ''}>${drEsc(dt)}</option>`
+        ).join('');
+      }
+      if (dailyWrap) {
+        dailyWrap.style.display = rankViewMode === 'daily' ? 'inline-flex' : 'none';
+        dailyWrap.innerHTML = dailyRankDates.map(dt => {
+          const chk = selectedDailyDates.includes(dt) ? 'checked' : '';
+          return `<label class="dr-pill" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:0.78rem;">` +
+            `<input type="checkbox" ${chk} onchange="onToggleDailyDate('${drEsc(dt)}', this.checked)"> ${drEsc(dt)}</label>`;
+        }).join('');
+      }
+    }
+
+    function onRankDateChange(dt) {
+      if (!dt || !dailyRankBlocks[dt]) return;
+      selectedRankDate = dt;
+      const blk = dailyRankBlocks[dt];
+      currentStationsData = blk.stations || [];
+      currentTotalRow = blk.totalRow || null;
+      fileMeta.dateToday = dt;
+      fileMeta.uploadedTitle = `${dt} STR Rank`;
+      fileMeta.hasSubheader = Boolean(blk.subDates && Object.values(blk.subDates).some(Boolean));
+      fileMeta.subDates = blk.subDates || {};
+      userEditedAnalysis = false;
+      renderStationUI();
+    }
+
+    function setRankViewMode(mode) {
+      rankViewMode = (mode === 'daily') ? 'daily' : 'single';
+      renderStationUI();
+    }
+
+    function onToggleDailyDate(dt, checked) {
+      if (checked) {
+        if (!selectedDailyDates.includes(dt)) {
+          selectedDailyDates = dailyRankDates.filter(d => d === dt || selectedDailyDates.includes(d));
+        }
+      } else {
+        if (selectedDailyDates.length <= 1) {
+          renderDailyRankControls();
+          return;
+        }
+        selectedDailyDates = selectedDailyDates.filter(d => d !== dt);
+      }
+      renderStationUI();
+    }
+
+    function onRankRespToggle(checked) {
+      showRankRespCol = Boolean(checked);
+      renderStationUI();
+    }
+
+    function formatMonthCell(val, colHeader) {
+      if (val === undefined || val === null || val === '') return '-';
+      const s = String(val).trim();
+      if (!s || s.toLowerCase() === 'nan') return '-';
+      const num = Number(s);
+      if (isNaN(num)) return drEsc(s);
+      const h = String(colHeader || '').toLowerCase();
+      if (h.includes('%')) return (num * 100).toFixed(2) + '%';
+      if (h.includes('rank') || h === 'lost' || h === 'dnr' || h === 'pending') return String(Math.round(num));
+      return num.toFixed(2);
+    }
+
+    function renderMonthRankTable() {
+      const card = document.getElementById('month-rank-card');
+      const thead = document.getElementById('month-rank-thead');
+      const tbody = document.getElementById('month-rank-body');
+      if (!card || !thead || !tbody) return;
+      if (!monthRankData || !monthRankData.headers || !monthRankData.headers.length) {
+        card.style.display = 'none';
+        return;
+      }
+      card.style.display = '';
+      const hdrs = monthRankData.headers;
+      const sub = monthRankData.subDates || [];
+      const hasSub = sub.some(v => v && String(v).trim() !== '');
+      let th = `<tr class="title-header"><th colspan="${hdrs.length}">${drEsc(monthRankData.title || 'MonthRank')}</th></tr>`;
+      th += `<tr class="main-header">${hdrs.map(h => `<th>${drEsc(h)}</th>`).join('')}</tr>`;
+      if (hasSub) {
+        th += `<tr class="sub-header">${hdrs.map((_, i) => `<th>${drEsc(sub[i] || '')}</th>`).join('')}</tr>`;
+      }
+      thead.innerHTML = th;
+
+      let tb = '';
+      (monthRankData.rows || []).forEach(r => {
+        tb += `<tr>${hdrs.map((h, i) => {
+          const val = formatMonthCell(r[i], h);
+          const style = i === 0 ? ' style="font-weight:600;"' : '';
+          return `<td${style}>${val}</td>`;
+        }).join('')}</tr>`;
+      });
+      if (monthRankData.totalRow) {
+        tb += `<tr class="total-row">${hdrs.map((h, i) => {
+          const val = i === 0 ? drEsc(monthRankData.totalRow[i] || 'Total') : formatMonthCell(monthRankData.totalRow[i], h);
+          return `<td>${val}</td>`;
+        }).join('')}</tr>`;
+      }
+      tbody.innerHTML = tb;
     }
 
     function renderDriverUI() {
@@ -4094,8 +4287,8 @@
       document.getElementById('ui-dashboard-subtitle').innerText = getTranslation('subtitle');
       const elUploadPromptD = document.getElementById('ui-upload-prompt');
       if (elUploadPromptD) elUploadPromptD.innerText = 'Import Station / Driver Rank Excel';
-      document.getElementById('ui-top3-title').innerText = getTranslation('driverTopTitle');
-      document.getElementById('ui-bottom3-title').innerText = getTranslation('driverBottomTitle');
+      const elTop3TitleD = document.getElementById('ui-top3-title'); if (elTop3TitleD) elTop3TitleD.innerText = getTranslation('driverTopTitle');
+      const elBot3TitleD = document.getElementById('ui-bottom3-title'); if (elBot3TitleD) elBot3TitleD.innerText = getTranslation('driverBottomTitle');
       document.getElementById('ui-rules-title').innerText = getTranslation('rulesTitle');
 
       // Rules tab
@@ -4170,70 +4363,73 @@
         return sB - sA;
       });
 
-      // Top 3 Podium Cards in Driver view
+      // Top 3 Podium Cards in Driver view (if present)
       const topPodiumList = document.getElementById('top-podium-list');
-      topPodiumList.innerHTML = '';
-      const top3 = sortedForPodium.slice(0, 3);
-      top3.forEach((s, idx) => {
-        let rankClass = 'podium-gold';
-        let trophy = '🥇';
-        if (idx === 1) { rankClass = 'podium-silver'; trophy = '🥈'; }
-        if (idx === 2) { rankClass = 'podium-bronze'; trophy = '🥉'; }
+      if (topPodiumList) {
+        topPodiumList.innerHTML = '';
+        const top3 = sortedForPodium.slice(0, 3);
+        top3.forEach((s, idx) => {
+          let rankClass = 'podium-gold';
+          let trophy = '🥇';
+          if (idx === 1) { rankClass = 'podium-silver'; trophy = '🥈'; }
+          if (idx === 2) { rankClass = 'podium-bronze'; trophy = '🥉'; }
 
-        const displayScore = typeof s.score === 'number' ? s.score.toFixed(2) : s.score;
+          const displayScore = typeof s.score === 'number' ? s.score.toFixed(2) : s.score;
 
-        const card = document.createElement('div');
-        card.className = `podium-card`;
-        card.innerHTML = `
-          <div class="podium-left">
-            <div class="rank-badge ${rankClass}">${trophy}</div>
-            <div>
-              <div class="station-name">${s.name} <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted);">(${s.Station})</span></div>
-              <div style="font-size:0.75rem; color:var(--text-muted); font-family:monospace;">${s.userId}</div>
+          const card = document.createElement('div');
+          card.className = `podium-card`;
+          card.innerHTML = `
+            <div class="podium-left">
+              <div class="rank-badge ${rankClass}">${trophy}</div>
+              <div>
+                <div class="station-name">${s.name} <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted);">(${s.Station})</span></div>
+                <div style="font-size:0.75rem; color:var(--text-muted); font-family:monospace;">${s.userId}</div>
+              </div>
             </div>
-          </div>
-          <div class="podium-score">${displayScore}</div>
-        `;
-        topPodiumList.appendChild(card);
-      });
+            <div class="podium-score">${displayScore}</div>
+          `;
+          topPodiumList.appendChild(card);
+        });
+      }
 
-      // Bottom Attention Cards in Driver view
+      // Bottom Attention Cards in Driver view (if present)
       const bottomAttentionList = document.getElementById('bottom-attention-list');
-      bottomAttentionList.innerHTML = '';
       const bottom3 = [...sortedForPodium].reverse().slice(0, 3);
+      if (bottomAttentionList) {
+        bottomAttentionList.innerHTML = '';
+        bottom3.forEach(s => {
+          const card = document.createElement('div');
+          card.className = `podium-card`;
+          
+          let weakTextHtml = '';
+          if (s.weakMetrics && s.weakMetrics.length > 0) {
+            weakTextHtml = `<div class="weak-indicators-list">` + 
+              s.weakMetrics.map(m => {
+                let displayVal = '';
+                let label = '';
+                if (m === 'signedPct') { displayVal = formatPercent(s.signedPct); label = 'Signed%'; }
+                if (m === 'avgSignedNum') { displayVal = s.avgSignedNum; label = 'Signed Num'; }
+                if (m === 'lost') { displayVal = s.lost; label = 'Lost'; }
+                if (m === 'dnr') { displayVal = s.dnr; label = 'DNR'; }
+                return `<span class="weak-indicator-tag">${label}: ${displayVal}</span>`;
+              }).join(' ') + `</div>`;
+          }
 
-      bottom3.forEach(s => {
-        const card = document.createElement('div');
-        card.className = `podium-card`;
-        
-        let weakTextHtml = '';
-        if (s.weakMetrics && s.weakMetrics.length > 0) {
-          weakTextHtml = `<div class="weak-indicators-list">` + 
-            s.weakMetrics.map(m => {
-              let displayVal = '';
-              let label = '';
-              if (m === 'signedPct') { displayVal = formatPercent(s.signedPct); label = 'Signed%'; }
-              if (m === 'avgSignedNum') { displayVal = s.avgSignedNum; label = 'Signed Num'; }
-              if (m === 'lost') { displayVal = s.lost; label = 'Lost'; }
-              if (m === 'dnr') { displayVal = s.dnr; label = 'DNR'; }
-              return `<span class="weak-indicator-tag">${label}: ${displayVal}</span>`;
-            }).join(' ') + `</div>`;
-        }
+          const displayScore = typeof s.score === 'number' ? s.score.toFixed(2) : s.score;
 
-        const displayScore = typeof s.score === 'number' ? s.score.toFixed(2) : s.score;
-
-        card.innerHTML = `
-          <div class="podium-left">
-            <div class="rank-badge podium-attention">#${s.rank}</div>
-            <div>
-              <div class="station-name">${s.name} <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted);">(${s.Station})</span></div>
-              ${weakTextHtml}
+          card.innerHTML = `
+            <div class="podium-left">
+              <div class="rank-badge podium-attention">#${s.rank}</div>
+              <div>
+                <div class="station-name">${s.name} <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted);">(${s.Station})</span></div>
+                ${weakTextHtml}
+              </div>
             </div>
-          </div>
-          <div class="podium-score" style="color: var(--danger-text)">${displayScore}</div>
-        `;
-        bottomAttentionList.appendChild(card);
-      });
+            <div class="podium-score" style="color: var(--danger-text)">${displayScore}</div>
+          `;
+          bottomAttentionList.appendChild(card);
+        });
+      }
 
       // Render Driver Table Rows (Sorted by Rank 1 ➔ N)
       const tbody = document.getElementById('table-body');
@@ -5154,9 +5350,12 @@
         // Lost sheet：名称含 lost
         // DNR  sheet：名称含 dnr
         const findSheet = (keyword) => sheetNames.find(n => n.toLowerCase().includes(keyword));
-        const rankSheetName = findSheet('rank') || sheetNames[0];
-        const lostSheetName = findSheet('lost');
-        const dnrSheetName  = findSheet('dnr');
+        const dailyRankSheetName = sheetNames.find(n => /^daily\s*rank$/i.test(n.trim())) || findSheet('dailyrank');
+        const monthRankSheetName = sheetNames.find(n => /^month\s*rank$/i.test(n.trim())) || findSheet('monthrank') || findSheet('month');
+        const groupSheetName     = sheetNames.find(n => /^group$/i.test(n.trim())) || findSheet('group');
+        const rankSheetName      = dailyRankSheetName || findSheet('rank') || sheetNames[0];
+        const lostSheetName      = findSheet('lost');
+        const dnrSheetName       = findSheet('dnr');
 
         // Detect date in sheet name if present
         const dateInSheet = detectDateInHeader(rankSheetName);
@@ -5172,12 +5371,27 @@
           return;
         }
 
-        // 重置 trackingMap 与 dnrStats
+        // 重置 trackingMap, dnrStats 与 DailyRank/MonthRank/Group 状态
         trackingMap = {};
         rankSourceMap = { lost: [], dnr: [] };
         rankDrillBuckets = [];
         dnrStats = { total: 15, excluded: 6, remained: 9, hasData: false };
+        dailyRankBlocks = {};
+        dailyRankDates = [];
+        selectedRankDate = '';
+        rankViewMode = 'single';
+        selectedDailyDates = [];
+        rankGroupMap = {};
+        monthRankData = null;
 
+        if (groupSheetName) {
+          const groupRows = XLSX.utils.sheet_to_json(workbook.Sheets[groupSheetName], {header: 1, defval: ''});
+          parseRankGroupSheet(groupRows);
+        }
+        if (monthRankSheetName) {
+          const monthRows = XLSX.utils.sheet_to_json(workbook.Sheets[monthRankSheetName], {header: 1, defval: ''});
+          parseMonthRankSheet(monthRows);
+        }
         if (lostSheetName) {
           const lostRows = XLSX.utils.sheet_to_json(workbook.Sheets[lostSheetName], {header: 1, defval: ''});
           parseTrackingSheet(lostRows, 'lost',
@@ -5189,9 +5403,234 @@
           parseDnrSheet(dnrRows);
         }
 
-        analyzeAndMapColumns(rankRows);
+        if (!parseDailyRankWorkbook(rankRows)) {
+          analyzeAndMapColumns(rankRows);
+        }
       };
       reader.readAsArrayBuffer(file);
+    }
+
+    function formatRankDateIso(val) {
+      if (val === undefined || val === null || val === '') return '';
+      if (typeof drDate === 'function') {
+        const d = drDate(val);
+        if (d) return d;
+      }
+      if (typeof val === 'number' && val > 20000 && val < 80000) {
+        const utc = new Date(Math.round((val - 25569) * 86400 * 1000));
+        return utc.toISOString().slice(0, 10);
+      }
+      return String(val).trim();
+    }
+
+    function parseRankGroupSheet(rows) {
+      if (!rows || rows.length < 2) return;
+      let hIdx = 0;
+      let respCol = -1, stCol = -1;
+      for (let r = 0; r < Math.min(rows.length, 5); r++) {
+        const row = rows[r] || [];
+        for (let c = 0; c < row.length; c++) {
+          const h = String(row[c] || '').toLowerCase().replace(/\s+/g, '');
+          if (h.includes('responsib') || h.includes('owner') || h.includes('负责人')) respCol = c;
+          if (h === 'station' || h.includes('网点')) stCol = c;
+        }
+        if (respCol !== -1 && stCol !== -1) { hIdx = r; break; }
+      }
+      if (respCol === -1) respCol = 0;
+      if (stCol === -1) stCol = 1;
+      for (let r = hIdx + 1; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row) continue;
+        const st = String(row[stCol] || '').trim();
+        const resp = String(row[respCol] || '').trim();
+        if (!st) continue;
+        const k = drStKey(st);
+        if (k) rankGroupMap[k] = resp;
+      }
+    }
+
+    function parseMonthRankSheet(rows) {
+      if (!rows || rows.length < 2) return;
+      let hIdx = -1;
+      for (let r = 0; r < Math.min(rows.length, 5); r++) {
+        const row = rows[r] || [];
+        const hasSt = row.some(c => String(c || '').toLowerCase().includes('station'));
+        const hasRk = row.some(c => String(c || '').toLowerCase().includes('rank'));
+        if (hasSt && hasRk) { hIdx = r; break; }
+      }
+      if (hIdx === -1) return;
+      let title = 'MonthRank';
+      for (let r = 0; r < hIdx; r++) {
+        const nonEmpty = (rows[r] || []).map(c => String(c || '').trim()).filter(Boolean);
+        if (nonEmpty.length) { title = nonEmpty.join(' '); break; }
+      }
+      const rawHdrs = rows[hIdx] || [];
+      let lastCol = rawHdrs.length - 1;
+      while (lastCol > 0 && String(rawHdrs[lastCol] || '').trim() === '') lastCol--;
+      const headers = rawHdrs.slice(0, lastCol + 1).map(c => String(c || '').trim().replace(/\s+/g, ' '));
+      let dataStart = hIdx + 1;
+      let subDates = [];
+      if (dataStart < rows.length) {
+        const nextRow = rows[dataStart] || [];
+        const c0 = String(nextRow[0] || '').trim().toLowerCase();
+        const c1 = String(nextRow[1] || '').trim().toLowerCase();
+        if (c0 === 'station' || c1 === 'rank') {
+          subDates = nextRow.slice(0, lastCol + 1).map((c, idx) => {
+            if (idx <= 2 && /^(station|rank|date)$/i.test(String(c || '').trim())) return '';
+            return String(c || '').trim();
+          });
+          dataStart++;
+        }
+      }
+      const dataRows = [];
+      let totalRow = null;
+      for (let r = dataStart; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row) continue;
+        const st = String(row[0] || '').trim();
+        if (!st) continue;
+        const slice = row.slice(0, lastCol + 1);
+        if (st.toLowerCase() === 'total') {
+          totalRow = slice;
+          break;
+        }
+        dataRows.push(slice);
+      }
+      if (dataRows.length || totalRow) {
+        monthRankData = { title, headers, subDates, rows: dataRows, totalRow };
+      }
+    }
+
+    function parseDailyRankWorkbook(rows) {
+      if (!rows || rows.length < 3) return false;
+      const hRow = rows[0] || [];
+      const normH = hRow.map(c => String(c || '').toLowerCase().replace(/[\s\r\n]+/g, ''));
+      const findCol = (pred) => normH.findIndex(pred);
+
+      const stCol = findCol(h => h === 'station' || h.includes('网点'));
+      const rkCol = findCol(h => h === 'rank' || h.includes('排名'));
+      const scCol = findCol(h => h.includes('score') || h.includes('得分'));
+      const dispCol = findCol(h => h.includes('dispatch') && !h.includes('signed'));
+      const delCol = findCol(h => h.includes('delivered') || h.includes('24h'));
+      const lostCntCol = findCol(h => h.includes('lost') && !h.includes('%'));
+      const lostPctCol = findCol(h => h.includes('lost') && h.includes('%'));
+      const dnrCntCol = findCol(h => h.includes('dnr') && !h.includes('%'));
+      const dnrPctCol = findCol(h => h.includes('dnr') && h.includes('%'));
+
+      if (stCol === -1 || rkCol === -1 || dispCol === -1 || delCol === -1) return false;
+
+      // Detect if there are subheader blocks (e.g. Row 1+ has Station/Rank + dates)
+      let hasDateBlocks = false;
+      for (let r = 1; r < Math.min(rows.length, 6); r++) {
+        const row = rows[r] || [];
+        if (String(row[stCol] || '').trim().toLowerCase() === 'station' && String(row[rkCol] || '').trim().toLowerCase() === 'rank') {
+          hasDateBlocks = true;
+          break;
+        }
+      }
+      if (!hasDateBlocks) return false;
+
+      const parseNum = (v) => {
+        if (v === undefined || v === null || v === '') return 0;
+        const s = String(v).trim();
+        if (!s || s.toLowerCase() === 'nan') return 0;
+        if (s.endsWith('%')) return parseFloat(s) / 100 || 0;
+        const n = Number(s);
+        return isNaN(n) ? 0 : n;
+      };
+
+      let curSubDates = {};
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row || row.every(c => c === '' || c === null || c === undefined)) continue;
+        const stVal = String(row[stCol] || '').trim();
+        const rkVal = String(row[rkCol] || '').trim();
+        if (stVal.toLowerCase() === 'station' && rkVal.toLowerCase() === 'rank') {
+          curSubDates = {
+            dispatch: formatRankDateIso(row[dispCol]),
+            delivered: formatRankDateIso(row[delCol]),
+            lostCnt: lostCntCol !== -1 ? formatRankDateIso(row[lostCntCol]) : '',
+            lostPct: lostPctCol !== -1 ? formatRankDateIso(row[lostPctCol]) : '',
+            dnrCnt: dnrCntCol !== -1 ? formatRankDateIso(row[dnrCntCol]) : '',
+            dnrPct: dnrPctCol !== -1 ? formatRankDateIso(row[dnrPctCol]) : ''
+          };
+          continue;
+        }
+        if (!stVal) continue;
+        const dtIso = formatRankDateIso(row[0]);
+        if (!dtIso) continue;
+        if (!dailyRankBlocks[dtIso]) {
+          dailyRankBlocks[dtIso] = { date: dtIso, subDates: Object.assign({}, curSubDates), stations: [], totalRow: null };
+        }
+        const blk = dailyRankBlocks[dtIso];
+        const disp = parseNum(row[dispCol]);
+        const del = parseNum(row[delCol]);
+        const lostCnt = lostCntCol !== -1 ? Math.round(parseNum(row[lostCntCol])) : 0;
+        const lostPct = lostPctCol !== -1 ? parseNum(row[lostPctCol]) : 0;
+        const dnrCnt = dnrCntCol !== -1 ? Math.round(parseNum(row[dnrCntCol])) : 0;
+        const dnrPct = dnrPctCol !== -1 ? parseNum(row[dnrPctCol]) : 0;
+
+        if (stVal.toLowerCase() === 'total') {
+          blk.totalRow = {
+            Station: 'Total',
+            Dispatch: disp,
+            Delivered: del,
+            LostCount: lostCnt,
+            LostPercent: lostPct,
+            DNRCount: dnrCnt,
+            DNRPercent: dnrPct
+          };
+          continue;
+        }
+
+        const rkNum = parseInt(rkVal, 10);
+        const scNum = scCol !== -1 ? Number(parseNum(row[scCol]).toFixed(2)) : 0;
+        const weakMetrics = [];
+        if (disp < KPI_RULES.dispatch.target) weakMetrics.push('dispatch');
+        if (del < KPI_RULES.delivered.target) weakMetrics.push('delivered');
+        if (lostPct > KPI_RULES.lost.target) weakMetrics.push('lost');
+        if (dnrPct > KPI_RULES.dnr.target) weakMetrics.push('dnr');
+
+        blk.stations.push({
+          Station: stVal,
+          rank: isNaN(rkNum) ? rkVal : rkNum,
+          score: scNum,
+          Dispatch: disp,
+          Delivered: del,
+          LostCount: lostCnt,
+          LostPercent: lostPct,
+          DNRCount: dnrCnt,
+          DNRPercent: dnrPct,
+          weakMetrics
+        });
+      }
+
+      dailyRankDates = Object.keys(dailyRankBlocks).sort();
+      if (!dailyRankDates.length) return false;
+
+      dailyRankDates.forEach(dt => {
+        dailyRankBlocks[dt].stations.sort((a, b) => (parseInt(a.rank, 10) || 9999) - (parseInt(b.rank, 10) || 9999));
+      });
+
+      selectedRankDate = dailyRankDates[dailyRankDates.length - 1];
+      selectedDailyDates = [...dailyRankDates];
+      const latestBlk = dailyRankBlocks[selectedRankDate];
+      currentReportType = 'daily';
+      currentStationsData = latestBlk.stations || [];
+      currentTotalRow = latestBlk.totalRow || null;
+      fileMeta.dateToday = selectedRankDate;
+      fileMeta.uploadedTitle = `${selectedRankDate} STR Rank`;
+      fileMeta.hasSubheader = Boolean(latestBlk.subDates && Object.values(latestBlk.subDates).some(Boolean));
+      fileMeta.subDates = latestBlk.subDates || {};
+
+      document.getElementById('report-frame').style.display = 'block';
+      document.getElementById('export-btn').style.display = 'flex';
+      const emptyEl = document.getElementById('rank-empty-state');
+      if (emptyEl) emptyEl.style.display = 'none';
+      if (typeof appMarkDirty === 'function') appMarkDirty();
+      renderUI();
+      if (typeof dcRenderRankStatus === 'function') dcRenderRankStatus();
+      return true;
     }
 
     function analyzeAndMapColumns(rows) {
@@ -5704,6 +6143,7 @@
         return hRow.findIndex((h, idx) => idx !== dnrSignedDateCol && (h.includes('date') || h.includes('日期')) && !h.includes('sign') && !h.includes('签收'));
       })();
       const dnrPodCol = hRow.findIndex(h => h.includes('pod'));
+      const dnrPostcodeCol = hRow.findIndex(h => h.includes('postcode') || h.includes('plz') || h.includes('zipcode') || h.includes('zip') || h.includes('postalcode') || h.includes('邮编'));
       const dnrRemarkCol = hRow.findIndex(h => h.includes('remark') || h.includes('reason') || h.includes('备注'));
       let remained = 0;
       let excluded = 0;
@@ -5757,6 +6197,7 @@
               signedDate: dnrSignedDateCol !== -1 ? (drDate(row[dnrSignedDateCol]) || String(row[dnrSignedDateCol] || '').trim()) : '',
               finalblame: respCol !== -1 ? String(row[respCol] || '').trim() : '',
               pod: dnrPodCol !== -1 ? String(row[dnrPodCol] || '').trim() : '',
+              postcode: (() => { const pc = dnrPostcodeCol !== -1 ? String(row[dnrPostcodeCol] || '').trim() : ''; return (pc && pc !== '0') ? pc : ''; })(),
               remark: dnrRemarkCol !== -1 ? String(row[dnrRemarkCol] || '').trim() : ''
             });
             if (!trackingMap[stationName]) trackingMap[stationName] = {};
@@ -5957,6 +6398,7 @@
       dnrDimension: 'avg', // 'avg' | 'total' | 'daily'
       dnrShowSystem: true,
       dnrShowCommonPod: true,
+      dnrShowPostcode: true,
       backlogStations: null, // null = All stations selected; Set<stKey> for multi-select
       computed: null,
       warnings: []
@@ -5967,7 +6409,7 @@
       lost:    { spec: { waybill: ['waybill','waybillno','wbno','\u8fd0\u5355','\u5355\u53f7','tracking'], station: ['station','\u7f51\u70b9','site'], deadline: ['deadline','deadlinedate','duedate'], lastscan: ['lastscandate','lastscan','\u6700\u540e\u626b\u63cf\u65e5\u671f','\u6700\u65b0\u626b\u63cf\u65f6\u95f4'], type: ['lastscantype','lastscantypename','scantype','\u6700\u540e\u626b\u63cf\u7c7b\u578b','\u626b\u63cf\u7c7b\u578b'], driver: ['driver','drivername','\u53f8\u673a'], client: ['client','customer','\u5ba2\u6237'] }, req: ['station','driver'] },
       return1: { spec: { waybill: ['waybill','waybillno','wbno','\u8fd0\u5355','\u5355\u53f7','tracking'], ascandate: ['ascandate','scandate','arrivalscandate'], client: ['client','customer','\u5ba2\u6237'], station: ['station','\u7f51\u70b9','site'], lastscan: ['lastscandate','lastscan','\u6700\u540e\u626b\u63cf\u65e5\u671f','\u6700\u65b0\u626b\u63cf\u65f6\u95f4'], type: ['lastscantype','lastscantypename','scantype'], driver: ['driver','drivername','\u53f8\u673a'], noupdate: ['noupdate'], problem: ['problem'] }, req: ['station','driver'] },
       return2: { spec: { waybill: ['waybill','waybillno','wbno','\u8fd0\u5355','\u5355\u53f7','tracking'], ascandate: ['ascandate','scandate','arrivalscandate'], client: ['client','customer','\u5ba2\u6237'], station: ['station','\u7f51\u70b9','site'], lastscan: ['lastscandate','lastscan','\u6700\u540e\u626b\u63cf\u65e5\u671f','\u6700\u65b0\u626b\u63cf\u65f6\u95f4'], type: ['lastscantype','lastscantypename','scantype'], driver: ['driver','drivername','\u53f8\u673a'], noupdate: ['noupdate'], problem: ['problem'] }, req: ['station','driver'] },
-      dnr:     { spec: { waybill: ['waybill','waybillno','wbno','\u8fd0\u5355','\u5355\u53f7','tracking'], station: ['station','\u7f51\u70b9','site'], times: ['times','\u6b21\u6570'], cdate: ['complaintdate','\u6295\u8bc9\u65e5\u671f'], signeddate: ['signeddate','signdate','\u7b7e\u6536\u65e5\u671f'], pod: ['podlocation','pod','pod\u4f4d\u7f6e','\u51ed\u8bc1\u4f4d\u7f6e'], system: ['systemdeliverylocation','systemlocation','systempod','system'], driver: ['driver','drivername','\u53f8\u673a'], finalblame: ['finalblame','finalresponsibility','finalresp','responsibility','blame','\u8d23\u4efb\u5f52\u5c5e','\u6700\u7ec8\u8d23\u4efb','\u8d23\u4efb\u5224\u5b9a'] }, req: ['station','times','cdate'] },
+      dnr:     { spec: { waybill: ['waybill','waybillno','wbno','\u8fd0\u5355','\u5355\u53f7','tracking'], station: ['station','\u7f51\u70b9','site'], times: ['times','\u6b21\u6570'], cdate: ['complaintdate','\u6295\u8bc9\u65e5\u671f'], signeddate: ['signeddate','signdate','\u7b7e\u6536\u65e5\u671f'], pod: ['podlocation','pod','pod\u4f4d\u7f6e','\u51ed\u8bc1\u4f4d\u7f6e'], system: ['systemdeliverylocation','systemlocation','systempod','system'], postcode: ['postcode','plz','zipcode','zip','postalcode','\u90ae\u7f16'], driver: ['driver','drivername','\u53f8\u673a'], finalblame: ['finalblame','finalresponsibility','finalresp','responsibility','blame','\u8d23\u4efb\u5f52\u5c5e','\u6700\u7ec8\u8d23\u4efb','\u8d23\u4efb\u5224\u5b9a'] }, req: ['station','times','cdate'] },
       pending: { spec: { waybill: ['waybill','waybillno','wbno','\u8fd0\u5355','\u5355\u53f7','tracking'], station: ['station','\u7f51\u70b9','site'], scandate: ['ascandate','scandate','arrivalscandate'], lastscan: ['lastscandate','lastscan','\u6700\u540e\u626b\u63cf\u65e5\u671f','\u6700\u65b0\u626b\u63cf\u65f6\u95f4'], type: ['lastscantype','lastscantypename','scantype'], client: ['client','customer','\u5ba2\u6237'], noupdate: ['noupdate'], postcode: ['postcode','plz','zipcode','zip','postalcode','\u90ae\u7f16'], third: ['3rdcode','thirdcode','3rd'], remark: ['remark','remarks','\u5907\u6ce8'], deadline: ['deadline','deadlinedate','duedate'], driverid: ['driverid','userid','courierid','\u5de5\u53f7'], driver: ['driver','drivername','\u53f8\u673a'] }, req: ['station','type'] },
       ofd:     { spec: { station: ['station','\u7f51\u70b9','site'], third: ['3rdcode','thirdcode','3rd'] }, req: ['station','third'] },
       deliverprocess: { spec: { date: ['date','deliverydate','day','\u65e5\u671f'], station: ['station','\u7f51\u70b9','site'], courier: ['courier','courierid'], dispatched: ['dispatched','dispatch'], signed: ['signed','signedparcels','signedparcel'], inwh: ['inwh','inwarehouse'], problems: ['problems','problem'], nosigned: ['nosigned','unsigned'], pct: ['dispatchedsigned','dispatchedsignedpct','signedpct'], driver: ['driver','drivername','\u53f8\u673a'] }, req: ['date','station','dispatched','driver'] },
@@ -6287,6 +6729,7 @@
             lostTotal: 0, prevLostTotal: 0, lostByDriver: 0, lostByHub: 0, prevLostByHub: 0,
             willLostTotal: 0, prevWillLostTotal: 0, willLostByDriver: 0, willLostByHub: 0, prevWillLostByHub: 0,
             return1Total: 0, prevReturn1Total: 0, return2Total: 0,
+            pudoTotal: 0, prevPudoTotal: 0, pudoOverTotal: 0, prevPudoOverTotal: 0,
             pend3: [], noAttend: [], drivers: new Map(), pending: [], pendingPrev: [],
             typeCountsMain: new Map(), typeCountsPrev: new Map(), clientNames: new Map(),
             lostAllDrivers: new Map(), prevLostAllDrivers: new Map(), willLostAllDrivers: new Map(), prevWillLostAllDrivers: new Map(),
@@ -6294,7 +6737,7 @@
             dnrDriverRecords: [], dnrDriverRecordsByDrv: new Map(), dnrYestRecords: [],
             lostRecords: [], lostByDriverRecords: [], lostByHubRecords: [], lostRecordsByDrv: new Map(),
             willLostRecords: [], willLostByDriverRecords: [], willLostByHubRecords: [], willLostRecordsByDrv: new Map(),
-            return1Records: [], return1RecordsByDrv: new Map(), typeRecordsMain: new Map(),
+            return1Records: [], return1RecordsByDrv: new Map(), pudoRecords: [], pudoOverRecords: [], typeRecordsMain: new Map(),
             return1AllDrivers: new Map(), prevReturn1AllDrivers: new Map(), return2AllDrivers: new Map(), dnrDrivers: new Map(), driverDisplayNames: new Map()
           };
           st.set(k, s);
@@ -6463,7 +6906,9 @@
           const dnrSignedDate = ('signeddate' in dnr.map) ? (drDate(rec.signeddate) || drTxt(rec.signeddate)) : '';
           const dnrPodRaw = drTxt(rec.pod);
           const dnrPodClean = (dnrPodRaw && dnrPodRaw !== '0') ? dnrPodRaw : '';
-          const dnrRec = { waybill: dnrWb, station: s.name, driver: raw, cdate: cdateIso, signedDate: dnrSignedDate, finalblame: ('finalblame' in dnr.map) ? drTxt(rec.finalblame) : '', pod: dnrPodClean, times: timesVal };
+          const dnrPcRaw = ('postcode' in dnr.map) ? drTxt(rec.postcode) : '';
+          const dnrPcClean = (dnrPcRaw && dnrPcRaw !== '0') ? dnrPcRaw : '';
+          const dnrRec = { waybill: dnrWb, station: s.name, driver: raw, cdate: cdateIso, signedDate: dnrSignedDate, finalblame: ('finalblame' in dnr.map) ? drTxt(rec.finalblame) : '', pod: dnrPodClean, postcode: dnrPcClean, times: timesVal };
           if (timesVal === 1 && isDriverBlame) {
             s.dnrDriverTotal++;
             s.dnrDriverRecords.push(dnrRec);
@@ -6618,6 +7063,14 @@
             }
           }
         }
+        if (remark.toLowerCase() === 'pudo') {
+          s.pudoTotal++;
+          s.pudoRecords.push(pendItem);
+          if (deadline && deadline <= sysToday) {
+            s.pudoOverTotal++;
+            s.pudoOverRecords.push(pendItem);
+          }
+        }
       }
       if (pendPrev) for (const rec of pendPrev.records) {
         const ascandate = drDate(rec.scandate);
@@ -6673,6 +7126,12 @@
             const dk = drKey(rawDrv);
             s.prevReturn1AllDrivers.set(dk, (s.prevReturn1AllDrivers.get(dk) || 0) + 1);
             if (!s.driverDisplayNames.has(dk)) s.driverDisplayNames.set(dk, rawDrv);
+          }
+        }
+        if (remark.toLowerCase() === 'pudo') {
+          s.prevPudoTotal++;
+          if (deadline && deadline <= sysToday) {
+            s.prevPudoOverTotal++;
           }
         }
         if (drValidDrv(rawDrv)) {
@@ -6744,6 +7203,13 @@
       const dnrTabDatesSet = new Set();
       const dnrTabStMap = new Map();
       const dnrTabDrvMap = new Map();
+      const addPcCount = (map, pc) => {
+        if (!pc) return;
+        const k = pc.toUpperCase();
+        const prev = map.get(k);
+        if (prev) prev.count++;
+        else map.set(k, { label: pc, count: 1 });
+      };
       if (dnr && !dnr.missing.length) {
         for (const rec of dnr.records) {
           const s = getSt(rec.station);
@@ -6764,25 +7230,29 @@
           const podClean = (podRaw && podRaw !== '0') ? podRaw : '';
           const sysRaw = ('system' in dnr.map) ? drTxt(rec.system) : '';
           const sysClean = (sysRaw && sysRaw !== '0') ? sysRaw : '';
+          const pcRaw = ('postcode' in dnr.map) ? drTxt(rec.postcode) : '';
+          const pcClean = (pcRaw && pcRaw !== '0') ? pcRaw : '';
           const wb = ('waybill' in dnr.map) ? drTxt(rec.waybill) : '';
           const signedDate = ('signeddate' in dnr.map) ? (drDate(rec.signeddate) || drTxt(rec.signeddate)) : '';
-          const dnrRec = { waybill: wb, station: s.name, driver: drvName, cdate: cdateIso, signedDate, finalblame: drTxt(rec.finalblame), pod: podClean, system: sysClean, times: timesVal };
+          const dnrRec = { waybill: wb, station: s.name, driver: drvName, cdate: cdateIso, signedDate, finalblame: drTxt(rec.finalblame), pod: podClean, system: sysClean, postcode: pcClean, times: timesVal };
 
           const stKey = drStKey(s.name);
           if (!dnrTabStMap.has(stKey)) {
-            dnrTabStMap.set(stKey, { station: s.name, stationKey: stKey, total: 0, records: [], podCounts: new Map(), systemCounts: new Map(), drvDateCounts: new Map(), drvTotals: new Map(), drvNames: new Map(), byDate: new Map() });
+            dnrTabStMap.set(stKey, { station: s.name, stationKey: stKey, total: 0, records: [], podCounts: new Map(), systemCounts: new Map(), postcodeCounts: new Map(), drvDateCounts: new Map(), drvTotals: new Map(), drvNames: new Map(), byDate: new Map() });
           }
           const stEntry = dnrTabStMap.get(stKey);
           stEntry.total++;
           stEntry.records.push(dnrRec);
           if (podClean) stEntry.podCounts.set(podClean, (stEntry.podCounts.get(podClean) || 0) + 1);
           if (sysClean) stEntry.systemCounts.set(sysClean, (stEntry.systemCounts.get(sysClean) || 0) + 1);
-          if (!stEntry.byDate.has(cdateIso)) stEntry.byDate.set(cdateIso, { count: 0, records: [], pods: new Map(), systems: new Map() });
+          addPcCount(stEntry.postcodeCounts, pcClean);
+          if (!stEntry.byDate.has(cdateIso)) stEntry.byDate.set(cdateIso, { count: 0, records: [], pods: new Map(), systems: new Map(), postcodes: new Map() });
           const stDateCell = stEntry.byDate.get(cdateIso);
           stDateCell.count++;
           stDateCell.records.push(dnrRec);
           stDateCell.pods.set(podClean || 'Unknown', (stDateCell.pods.get(podClean || 'Unknown') || 0) + 1);
           stDateCell.systems.set(sysClean || 'Unknown', (stDateCell.systems.get(sysClean || 'Unknown') || 0) + 1);
+          addPcCount(stDateCell.postcodes, pcClean);
           stEntry.drvTotals.set(dk, (stEntry.drvTotals.get(dk) || 0) + 1);
           if (!stEntry.drvNames.has(dk)) stEntry.drvNames.set(dk, drvName);
           if (!stEntry.drvDateCounts.has(dk)) stEntry.drvDateCounts.set(dk, new Map());
@@ -6791,12 +7261,12 @@
 
           const rowKey = stKey + '||' + dk;
           if (!dnrTabDrvMap.has(rowKey)) {
-            dnrTabDrvMap.set(rowKey, { station: s.name, stationKey: stKey, driverKey: dk, driver: drvName, total: 0, records: [], pods: new Map(), podSys: new Map(), byDate: new Map() });
+            dnrTabDrvMap.set(rowKey, { station: s.name, stationKey: stKey, driverKey: dk, driver: drvName, total: 0, records: [], pods: new Map(), podSys: new Map(), postcodes: new Map(), byDate: new Map() });
           }
           const row = dnrTabDrvMap.get(rowKey);
           row.total++;
           row.records.push(dnrRec);
-          if (!row.byDate.has(cdateIso)) row.byDate.set(cdateIso, { count: 0, records: [], pods: new Map(), podSys: new Map() });
+          if (!row.byDate.has(cdateIso)) row.byDate.set(cdateIso, { count: 0, records: [], pods: new Map(), podSys: new Map(), postcodes: new Map() });
           const cell = row.byDate.get(cdateIso);
           cell.count++;
           cell.records.push(dnrRec);
@@ -6807,6 +7277,8 @@
           row.pods.set(podLabel, (row.pods.get(podLabel) || 0) + 1);
           cell.podSys.set(podSysKey, (cell.podSys.get(podSysKey) || 0) + 1);
           row.podSys.set(podSysKey, (row.podSys.get(podSysKey) || 0) + 1);
+          addPcCount(cell.postcodes, pcClean);
+          addPcCount(row.postcodes, pcClean);
         }
       }
       const dnrTabDates = Array.from(dnrTabDatesSet).sort((a, b) => b.localeCompare(a));
@@ -6840,6 +7312,7 @@
           dnrPerDay: dnrTabDayCount ? Math.round(se.total / dnrTabDayCount) : 0,
           commonPod: drJoinPairs(commonPodList),
           commonSystem: drJoinPairs(commonSystemList),
+          postcodeCounts: se.postcodeCounts,
           topDriver: drJoinPairs(topDrvList.map(x => `${x.name}:${x.total}`)),
           topDriverTotal: drJoinPairs(Array.from(se.drvTotals.entries()).sort((a, b) => (b[1] - a[1])).map(([dk2, tot2]) => `${se.drvNames.get(dk2) || dk2}:${tot2}`)),
           byDate: se.byDate,
@@ -7271,6 +7744,7 @@
         lostTotal: 0, prevLostTotal: 0, lostByDriver: 0, lostByHub: 0, prevLostByHub: 0,
         willLostTotal: 0, prevWillLostTotal: 0, willLostByDriver: 0, willLostByHub: 0, prevWillLostByHub: 0,
         return1Total: 0, prevReturn1Total: 0, return2Total: 0,
+        pudoTotal: 0, prevPudoTotal: 0, pudoOverTotal: 0, prevPudoOverTotal: 0, pudoRecords: [], pudoOverRecords: [],
         pend3: [], noAttend: [], drivers: new Map(), pending: [], pendingPrev: [],
         typeCountsMain: new Map(), typeCountsPrev: new Map(), clientNames: new Map(),
         lostAllDrivers: new Map(), prevLostAllDrivers: new Map(), willLostAllDrivers: new Map(), prevWillLostAllDrivers: new Map(),
@@ -7315,7 +7789,7 @@
         const hubDiff = hasCmp ? ' ' + (asHtml ? drDiffHtml(s.lostByHub, s.prevLostByHub) : drDiffText(s.lostByHub, s.prevLostByHub)) : '';
         const prevMap = hasCmp ? s.prevLostAllDrivers : null;
         return [
-          wrapTot(`Total:${s.lostTotal}`, s.lostRecords, 'pending', `${s.name} · Lost (${s.lostTotal})`) + totDiff,
+          wrapTot(`Lost:${s.lostTotal}`, s.lostRecords, 'pending', `${s.name} · Lost (${s.lostTotal})`) + totDiff,
           wrapTot(`hub lost:${s.lostByHub}`, s.lostByHubRecords, 'pending', `${s.name} · Hub Lost (${s.lostByHub})`) + hubDiff,
           ...drRegionDaLines(s.lostAllDrivers, s, triDriverSet, prevMap, asHtml, s.lostRecordsByDrv, 'pending', 'Lost')
         ].join(sep);
@@ -7326,16 +7800,37 @@
         const hubDiff = hasCmp ? ' ' + (asHtml ? drDiffHtml(s.willLostByHub, s.prevWillLostByHub) : drDiffText(s.willLostByHub, s.prevWillLostByHub)) : '';
         const prevMap = hasCmp ? s.prevWillLostAllDrivers : null;
         return [
-          wrapTot(`Total:${s.willLostTotal}`, s.willLostRecords, 'pending', `${s.name} · WillLost (${s.willLostTotal})`) + totDiff,
+          wrapTot(`WillLost:${s.willLostTotal}`, s.willLostRecords, 'pending', `${s.name} · WillLost (${s.willLostTotal})`) + totDiff,
           wrapTot(`hub lost:${s.willLostByHub}`, s.willLostByHubRecords, 'pending', `${s.name} · Hub WillLost (${s.willLostByHub})`) + hubDiff,
           ...drRegionDaLines(s.willLostAllDrivers, s, triDriverSet, prevMap, asHtml, s.willLostRecordsByDrv, 'pending', 'WillLost')
         ].join(sep);
+      }
+      if (kind === 'remark') {
+        const parts = [];
+        const lostPart = drRegionCellText(s, 'lost', triDriverSet, asHtml, hasCmp);
+        const willPart = drRegionCellText(s, 'willlost', triDriverSet, asHtml, hasCmp);
+        if (lostPart) parts.push(lostPart);
+        if (willPart) parts.push(willPart);
+        return parts.join(sep);
       }
       if (kind === 'return1') {
         if (!s.return1Total && !(hasCmp && s.prevReturn1Total)) return '';
         const totDiff = hasCmp ? ' ' + (asHtml ? drDiffHtml(s.return1Total, s.prevReturn1Total) : drDiffText(s.return1Total, s.prevReturn1Total)) : '';
         const prevMap = hasCmp ? s.prevReturn1AllDrivers : null;
         return [wrapTot(`Total:${s.return1Total}`, s.return1Records, 'pending', `${s.name} · Return (${s.return1Total})`) + totDiff, ...drRegionDaLines(s.return1AllDrivers, s, triDriverSet, prevMap, asHtml, s.return1RecordsByDrv, 'pending', 'Return')].join(sep);
+      }
+      if (kind === 'pudo') {
+        const curTot = s.pudoTotal || 0;
+        const prevTot = s.prevPudoTotal || 0;
+        if (!curTot && !(hasCmp && prevTot)) return '';
+        const curOver = s.pudoOverTotal || 0;
+        const prevOver = s.prevPudoOverTotal || 0;
+        const totDiff = hasCmp ? ' ' + (asHtml ? drDiffHtml(curTot, prevTot) : drDiffText(curTot, prevTot)) : '';
+        const overDiff = hasCmp ? ' ' + (asHtml ? drDiffHtml(curOver, prevOver) : drDiffText(curOver, prevOver)) : '';
+        return [
+          wrapTot(`Total${curTot}`, s.pudoRecords, 'pending', `${s.name} · PUDO (${curTot})`) + totDiff,
+          wrapTot(`Over:${curOver}`, s.pudoOverRecords, 'pending', `${s.name} · PUDO Over (${curOver})`) + overDiff
+        ].join(sep);
       }
       return '';
     }
@@ -7513,25 +8008,7 @@
 
       const hasCmp = Boolean(C.hasPendingCompare);
       const hasDnrCmp = Boolean(C.hasDnrCompare);
-      const todoRows = drGetRegionTodoRows(sts, hasCmp);
-      const todoPanel = document.getElementById('dr-region-todo-panel');
-      const layout = document.getElementById('dr-region-layout');
-      if (todoPanel && layout) {
-        if (todoRows.length) {
-          todoPanel.innerHTML =
-            '<div class="dr-banner"><span>To-Do List</span></div>' +
-            '<div class="dr-sec"><table class="dr-table"><thead><tr>' +
-            '<th class="l dr-todo-col-st">Station</th>' +
-            '<th class="l dr-todo-col-issue">Top issue</th>' +
-            '</tr></thead><tbody>' +
-            todoRows.map(r => `<tr>${drCell(drEsc(r.name), 'l dr-todo-col-st')}${drCell(r.html, 'l dr-todo-col-issue')}</tr>`).join('') +
-            '</tbody></table></div>';
-          todoPanel.style.display = '';
-          layout.classList.add('has-todo');
-        } else {
-          drHideRegionTodo();
-        }
-      }
+      drHideRegionTodo();
 
       h += '<div class="dr-sec"><table class="dr-table"><thead><tr>' +
         '<th class="l dr-col-st">Station</th>' +
@@ -7539,9 +8016,9 @@
         '<th class="l dr-col-da">DeliverProcess</th>' +
         '<th class="l dr-col-result">Pending</th>' +
         `<th class="l dr-col-da">DNR DA${dnrLbl}</th>` +
-        '<th class="l dr-col-da">Lost</th>' +
-        '<th class="l dr-col-da">WillLost</th>' +
+        '<th class="l dr-col-da">Remark</th>' +
         '<th class="l dr-col-da">Return</th>' +
+        '<th class="l dr-col-da">PUDO</th>' +
         '</tr></thead><tbody>';
 
       const totTypeMain = new Map(), totTypePrev = new Map(), maxTypeMain = new Map(), totTypeRecordsMain = new Map();
@@ -7594,9 +8071,9 @@
         const pendingCellHtml = [pendTotHtml, resultLinesHtml].filter(Boolean).join('<br>');
 
         const dnrDaHtml = drRegionCellText(s, 'dnr', triDriverSet, true, hasDnrCmp);
-        const lostHtml = drRegionCellText(s, 'lost', triDriverSet, true, hasCmp);
-        const willLostHtml = drRegionCellText(s, 'willlost', triDriverSet, true, hasCmp);
+        const remarkHtml = drRegionCellText(s, 'remark', triDriverSet, true, hasCmp);
         const returnHtml = drRegionCellText(s, 'return1', triDriverSet, true, hasCmp);
+        const pudoHtml = drRegionCellText(s, 'pudo', triDriverSet, true, hasCmp);
 
         rowsHtml += '<tr>' +
           drCell(drEsc(s.name), 'l dr-col-st') +
@@ -7604,9 +8081,9 @@
           drCell(dpCellHtml, 'l dr-col-da') +
           drCell(pendingCellHtml, 'l dr-col-result') +
           drCell(dnrDaHtml, 'l dr-col-da') +
-          drCell(lostHtml, 'l dr-col-da') +
-          drCell(willLostHtml, 'l dr-col-da') +
+          drCell(remarkHtml, 'l dr-col-da') +
           drCell(returnHtml, 'l dr-col-da') +
+          drCell(pudoHtml, 'l dr-col-da') +
           '</tr>';
       }
 
@@ -7630,6 +8107,12 @@
       const totRet1 = sum(s => s.return1Total);
       const totPrevRet1 = sum(s => s.prevReturn1Total);
       const totRet1Diff = hasCmp ? ' ' + drDiffHtml(totRet1, totPrevRet1) : '';
+      const totPudo = sum(s => s.pudoTotal || 0);
+      const totPrevPudo = sum(s => s.prevPudoTotal || 0);
+      const totPudoOver = sum(s => s.pudoOverTotal || 0);
+      const totPrevPudoOver = sum(s => s.prevPudoOverTotal || 0);
+      const totPudoDiff = hasCmp ? ' ' + drDiffHtml(totPudo, totPrevPudo) : '';
+      const totPudoOverDiff = hasCmp ? ' ' + drDiffHtml(totPudoOver, totPrevPudoOver) : '';
       const totPendVal = sum(s => s.pending.length);
       const totPrevPendVal = sum(s => s.pendingPrev.length);
       const allPendRecs = sts.flatMap(s => s.pending || []);
@@ -7645,6 +8128,8 @@
       const allWillLostRecs = sts.flatMap(s => s.willLostRecords || []);
       const allWillLostHubRecs = sts.flatMap(s => s.willLostByHubRecords || []);
       const allRetRecs = sts.flatMap(s => s.return1Records || []);
+      const allPudoRecs = sts.flatMap(s => s.pudoRecords || []);
+      const allPudoOverRecs = sts.flatMap(s => s.pudoOverRecords || []);
 
       const totSprVal = totDaVal ? Math.floor(totSignedVal / totDaVal) : 0;
       const totSignedCellHtml = `${drEsc(signedDateLbl)}<br>${totSignedVal ? drDrillWrap(totSignedVal, `Region Total · Signed (${totSignedVal})`, allSignedRecs, 'da') : 0}<br>SPR${totSprVal}<br>${totDaVal ? drDrillWrap(`DA${totDaVal}`, `Region Total · DA (${totDaVal})`, allSignedRecs, 'da') : 'DA0'}`;
@@ -7653,15 +8138,34 @@
         ? drDrillWrap(`${totDpDisp}:${totDpPctStr}`, `Region Total · DeliverProcess (${allDpRecs.length})`, allDpRecs, 'deliverprocess')
         : '';
 
+      const totRemarkParts = [];
+      if (totLost || (hasCmp && totPrevLost)) {
+        totRemarkParts.push(
+          (totLost ? drDrillWrap('Lost:' + totLost, `Region Total · Lost (${totLost})`, allLostRecs, 'pending') : 'Lost:0') + totLostDiff + '<br>' +
+          (totHubLost ? drDrillWrap('hub lost:' + totHubLost, `Region Total · Hub Lost (${totHubLost})`, allLostHubRecs, 'pending') : 'hub lost:0') + totHubLostDiff
+        );
+      }
+      if (totWillLost || (hasCmp && totPrevWillLost)) {
+        totRemarkParts.push(
+          (totWillLost ? drDrillWrap('WillLost:' + totWillLost, `Region Total · WillLost (${totWillLost})`, allWillLostRecs, 'pending') : 'WillLost:0') + totWillLostDiff + '<br>' +
+          (totHubWillLost ? drDrillWrap('hub lost:' + totHubWillLost, `Region Total · Hub WillLost (${totHubWillLost})`, allWillLostHubRecs, 'pending') : 'hub lost:0') + totHubWillLostDiff
+        );
+      }
+      const totRemarkHtml = totRemarkParts.join('<br>');
+      const totPudoHtml = (totPudo || (hasCmp && totPrevPudo))
+        ? (totPudo ? drDrillWrap('Total' + totPudo, `Region Total · PUDO (${totPudo})`, allPudoRecs, 'pending') : 'Total0') + totPudoDiff + '<br>' +
+          (totPudoOver ? drDrillWrap('Over:' + totPudoOver, `Region Total · PUDO Over (${totPudoOver})`, allPudoOverRecs, 'pending') : 'Over:0') + totPudoOverDiff
+        : '';
+
       h += `<tr class="dr-total">` +
         `<td class="l dr-col-st">Total</td>` +
         `<td class="l dr-col-signed">${totSignedCellHtml}</td>` +
         `<td class="l dr-col-da">${totDpCellHtml}</td>` +
         `<td class="l dr-col-result">${totResultHtml}</td>` +
         `<td class="l dr-col-da">${(totDnr || (hasDnrCmp && totDnrPrev)) ? (totDnr ? drDrillWrap('Total:' + totDnr, `Region Total · DNR DA (${totDnr})`, allDnrRecs, 'dnr') : 'Total:0') + totDnrDiff : ''}</td>` +
-        `<td class="l dr-col-da">${(totLost || (hasCmp && totPrevLost)) ? drDrillWrap('Total:' + totLost, `Region Total · Lost (${totLost})`, allLostRecs, 'pending') + totLostDiff + '<br>' + drDrillWrap('hub lost:' + totHubLost, `Region Total · Hub Lost (${totHubLost})`, allLostHubRecs, 'pending') + totHubLostDiff : ''}</td>` +
-        `<td class="l dr-col-da">${(totWillLost || (hasCmp && totPrevWillLost)) ? drDrillWrap('Total:' + totWillLost, `Region Total · WillLost (${totWillLost})`, allWillLostRecs, 'pending') + totWillLostDiff + '<br>' + drDrillWrap('hub lost:' + totHubWillLost, `Region Total · Hub WillLost (${totHubWillLost})`, allWillLostHubRecs, 'pending') + totHubWillLostDiff : ''}</td>` +
+        `<td class="l dr-col-da">${totRemarkHtml}</td>` +
         `<td class="l dr-col-da">${(totRet1 || (hasCmp && totPrevRet1)) ? drDrillWrap('Total:' + totRet1, `Region Total · Return (${totRet1})`, allRetRecs, 'pending') + totRet1Diff : ''}</td>` +
+        `<td class="l dr-col-da">${totPudoHtml}</td>` +
         `</tr>` + rowsHtml;
 
       h += '</tbody></table></div>';
@@ -7684,7 +8188,7 @@
       const dnrLbl = C.dnrDateLabel || '-';
       const header = [
         'Station', 'Signed', 'DeliverProcess', 'Pending',
-        `DNR DA (${dnrLbl})`, 'Lost', 'WillLost', 'Return'
+        `DNR DA (${dnrLbl})`, 'Remark', 'Return', 'PUDO'
       ];
       const stRows = [];
       const totTypeMain = new Map(), totTypePrev = new Map();
@@ -7718,9 +8222,9 @@
           dpText,
           pendText,
           drRegionCellText(s, 'dnr', triDriverSet, false, hasDnrCmp),
-          drRegionCellText(s, 'lost', triDriverSet, false, hasCmp),
-          drRegionCellText(s, 'willlost', triDriverSet, false, hasCmp),
-          drRegionCellText(s, 'return1', triDriverSet, false, hasCmp)
+          drRegionCellText(s, 'remark', triDriverSet, false, hasCmp),
+          drRegionCellText(s, 'return1', triDriverSet, false, hasCmp),
+          drRegionCellText(s, 'pudo', triDriverSet, false, hasCmp)
         ]);
       }
 
@@ -7743,6 +8247,12 @@
       const totRet1 = sum(s => s.return1Total);
       const totPrevRet1 = sum(s => s.prevReturn1Total);
       const totRet1Diff = hasCmp ? ' ' + drDiffText(totRet1, totPrevRet1) : '';
+      const totPudo = sum(s => s.pudoTotal || 0);
+      const totPrevPudo = sum(s => s.prevPudoTotal || 0);
+      const totPudoOver = sum(s => s.pudoOverTotal || 0);
+      const totPrevPudoOver = sum(s => s.prevPudoOverTotal || 0);
+      const totPudoDiff = hasCmp ? ' ' + drDiffText(totPudo, totPrevPudo) : '';
+      const totPudoOverDiff = hasCmp ? ' ' + drDiffText(totPudoOver, totPrevPudoOver) : '';
       const totPendVal = sum(s => s.pending.length);
       const totPrevPendVal = sum(s => s.pendingPrev.length);
       const totPendHead = (totPendVal || (hasCmp && totPrevPendVal))
@@ -7751,30 +8261,35 @@
       const totPendLines = drRegionResultLines(totTypeMain, totTypePrev, false, null, null, '', hasCmp);
       const totSprVal = totDaVal ? Math.floor(totSignedVal / totDaVal) : 0;
       const totDpPctStr = totDpDisp > 0 ? ((totDpSigned / totDpDisp) * 100).toFixed(1) + '%' : '0.0%';
+      const totRemarkParts = [];
+      if (totLost || (hasCmp && totPrevLost)) {
+        totRemarkParts.push(`Lost:${totLost}${totLostDiff}\nhub lost:${totHubLost}${totHubLostDiff}`);
+      }
+      if (totWillLost || (hasCmp && totPrevWillLost)) {
+        totRemarkParts.push(`WillLost:${totWillLost}${totWillLostDiff}\nhub lost:${totHubWillLost}${totHubWillLostDiff}`);
+      }
+      const totPudoText = (totPudo || (hasCmp && totPrevPudo))
+        ? `Total${totPudo}${totPudoDiff}\nOver:${totPudoOver}${totPudoOverDiff}`
+        : '';
       const totalRow = [
         'Total',
         `${signedDateLbl}\n${totSignedVal}\nSPR${totSprVal}\nDA${totDaVal}`,
         totDpDisp > 0 ? `${totDpDisp}:${totDpPctStr}` : '',
         [totPendHead, totPendLines].filter(Boolean).join('\n'),
         (totDnr || (hasDnrCmp && totDnrPrev)) ? `Total:${totDnr}${totDnrDiff}` : '',
-        (totLost || (hasCmp && totPrevLost)) ? `Total:${totLost}${totLostDiff}\nhub lost:${totHubLost}${totHubLostDiff}` : '',
-        (totWillLost || (hasCmp && totPrevWillLost)) ? `Total:${totWillLost}${totWillLostDiff}\nhub lost:${totHubWillLost}${totHubWillLostDiff}` : '',
-        (totRet1 || (hasCmp && totPrevRet1)) ? `Total:${totRet1}${totRet1Diff}` : ''
+        totRemarkParts.join('\n'),
+        (totRet1 || (hasCmp && totPrevRet1)) ? `Total:${totRet1}${totRet1Diff}` : '',
+        totPudoText
       ];
       const aoa = [header, totalRow, ...stRows];
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       ws['!cols'] = [
         { wch: 12 }, { wch: 16 }, { wch: 24 }, { wch: 38 },
-        { wch: 36 }, { wch: 38 }, { wch: 38 }, { wch: 36 }
+        { wch: 36 }, { wch: 42 }, { wch: 36 }, { wch: 18 }
       ];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Region');
-      const todoRows = drGetRegionTodoRows(sts, hasCmp);
-      const todoAoa = [['Station', 'Top issue'], ...todoRows.map(r => [r.name, r.text])];
-      const wsTodo = XLSX.utils.aoa_to_sheet(todoAoa);
-      wsTodo['!cols'] = [{ wch: 14 }, { wch: 28 }];
-      XLSX.utils.book_append_sheet(wb, wsTodo, 'To-Do List');
       const mmdd = drMD(C.today).replace('/', '-');
       XLSX.writeFile(wb, `${mmdd}_Region.xlsx`);
       showToast(`Exported ${mmdd}_Region.xlsx`);
@@ -7864,7 +8379,16 @@
     function drToggleDnrCol(col, checked) {
       if (col === 'system') DR.dnrShowSystem = Boolean(checked);
       else if (col === 'pod') DR.dnrShowCommonPod = Boolean(checked);
+      else if (col === 'postcode') DR.dnrShowPostcode = Boolean(checked);
       if (DR.computed && DR.active === 'dnr') drRenderDnrTab(DR.computed);
+    }
+
+    function drFormatPostcodeLines(pcMap) {
+      if (!pcMap || !pcMap.size) return '-';
+      return Array.from(pcMap.values())
+        .sort((a, b) => (b.count - a.count) || a.label.localeCompare(b.label))
+        .map(x => `${drEsc(x.label)}:${x.count}`)
+        .join('<br>');
     }
 
     function drFormatPodSys(podSysMap, showPod, showSys) {
@@ -7897,6 +8421,7 @@
       const dim = DR.dnrDimension || 'avg';
       const showSys = DR.dnrShowSystem !== false;
       const showPod = DR.dnrShowCommonPod !== false;
+      const showPostcode = DR.dnrShowPostcode !== false;
       const stOptions = dnrTab.stationRows.map(r => r.station);
       const stationRows = stFilter ? dnrTab.stationRows.filter(r => r.station === stFilter) : dnrTab.stationRows;
       const driverRows = stFilter ? dnrTab.driverRows.filter(r => r.station === stFilter) : dnrTab.driverRows;
@@ -7914,6 +8439,7 @@
         s += `<div class="dr-toolbar-group"><span class="dr-toolbar-label">Columns:</span>` +
           `<label class="dr-pill" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" ${showSys ? 'checked' : ''} onchange="drToggleDnrCol('system', this.checked)"> System</label>` +
           `<label class="dr-pill" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" ${showPod ? 'checked' : ''} onchange="drToggleDnrCol('pod', this.checked)"> Common POD</label>` +
+          `<label class="dr-pill" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" ${showPostcode ? 'checked' : ''} onchange="drToggleDnrCol('postcode', this.checked)"> Postcode</label>` +
           `</div>`;
         s += `<div class="dr-toolbar-group"><span class="dr-toolbar-label">Station:</span>` +
           `<select onchange="drOnDnrStationFilter(this.value)" style="padding:0.28rem 0.5rem;border:1px solid var(--border);border-radius:6px;background:var(--card-bg);color:var(--text-main);font-size:0.8rem;">` +
@@ -7955,18 +8481,23 @@
       // 1) Station Summary Table
       h += `<div class="dr-sec">Station Summary (${stationRows.length})</div>`;
       if (dim === 'daily') {
-        const subColsPerDate = (showSys ? 1 : 0) + (showPod ? 1 : 0);
-        if (subColsPerDate === 2) {
+        const activeDailyCols = [];
+        if (showSys) activeDailyCols.push('System');
+        if (showPod) activeDailyCols.push('Common POD');
+        if (showPostcode) activeDailyCols.push('Postcode');
+        const subColsPerDate = activeDailyCols.length;
+        if (subColsPerDate >= 2) {
           h += `<table class="dr-table"><thead><tr>` +
             `<th class="l" rowspan="2" style="width:56px;">Station</th>` +
-            dates.map(dt => `<th colspan="2">${drEsc(drMD(dt))}</th>`).join('') +
+            dates.map(dt => `<th colspan="${subColsPerDate}">${drEsc(drMD(dt))}</th>`).join('') +
             `</tr><tr>` +
-            dates.map(() => `<th>System</th><th>Common POD</th>`).join('') +
+            dates.map(() => activeDailyCols.map(c => `<th>${c}</th>`).join('')).join('') +
             `</tr></thead><tbody>`;
         } else {
+          const colSuffix = subColsPerDate === 1 ? ` (${activeDailyCols[0]})` : '';
           h += `<table class="dr-table"><thead><tr>` +
             `<th class="l" style="width:56px;">Station</th>` +
-            dates.map(dt => `<th>${drEsc(drMD(dt))}${showSys ? ' (System)' : (showPod ? ' (Common POD)' : '')}</th>`).join('') +
+            dates.map(dt => `<th>${drEsc(drMD(dt))}${colSuffix}</th>`).join('') +
             `</tr></thead><tbody>`;
         }
         stationRows.forEach(r => {
@@ -7984,13 +8515,14 @@
             const formatMap = m => (cnt > 0 && m && m.size)
               ? Array.from(m.entries()).sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0])).slice(0, 4).map(([p, c]) => `${drEsc(p)}:${c}`).join(', ')
               : '-';
-            if (subColsPerDate === 2) {
-              h += `<td class="dr-dnr-cell">${topHtml}<div class="dr-dnr-pods">${formatMap(cell && cell.systems)}</div></td>`;
-              h += `<td class="dr-dnr-cell"><div class="dr-dnr-pods">${formatMap(cell && cell.pods)}</div></td>`;
-            } else if (showSys) {
-              h += `<td class="dr-dnr-cell">${topHtml}<div class="dr-dnr-pods">${formatMap(cell && cell.systems)}</div></td>`;
-            } else if (showPod) {
-              h += `<td class="dr-dnr-cell">${topHtml}<div class="dr-dnr-pods">${formatMap(cell && cell.pods)}</div></td>`;
+            if (subColsPerDate >= 1) {
+              const subCells = [];
+              if (showSys) subCells.push(`<div class="dr-dnr-pods">${formatMap(cell && cell.systems)}</div>`);
+              if (showPod) subCells.push(`<div class="dr-dnr-pods">${formatMap(cell && cell.pods)}</div>`);
+              if (showPostcode) subCells.push(`<div class="dr-dnr-pods">${cnt > 0 ? drFormatPostcodeLines(cell && cell.postcodes) : '-'}</div>`);
+              subCells.forEach((body, idx) => {
+                h += `<td class="dr-dnr-cell">${idx === 0 ? topHtml : ''}${body}</td>`;
+              });
             } else {
               h += `<td class="dr-dnr-cell">${topHtml}</td>`;
             }
@@ -8005,6 +8537,7 @@
           `<th style="width:58px;">${isTotal ? 'Total DNR' : 'DNR/Day'}</th>` +
           (showSys ? `<th class="l">System</th>` : '') +
           (showPod ? `<th class="l">Common POD</th>` : '') +
+          (showPostcode ? `<th class="l">Postcode</th>` : '') +
           `<th class="l">${isTotal ? 'Top Driver (Total)' : 'Top Driver (Daily &gt; 1)'}</th>` +
           `</tr></thead><tbody>`;
         stationRows.forEach(r => {
@@ -8014,6 +8547,7 @@
             : val;
           const commonSysHtml = drEsc(r.commonSystem || '-').replace(/\n/g, '<br>');
           const commonPodHtml = drEsc(r.commonPod).replace(/\n/g, '<br>');
+          const postcodeHtml = drFormatPostcodeLines(r.postcodeCounts);
           const topDriverRaw = isTotal ? (r.topDriverTotal || r.topDriver) : r.topDriver;
           const topDriverHtml = drEsc(topDriverRaw).replace(/\n/g, '<br>');
           h += `<tr>` +
@@ -8021,6 +8555,7 @@
             `<td>${dnrValDrill}</td>` +
             (showSys ? `<td class="l wrap">${commonSysHtml}</td>` : '') +
             (showPod ? `<td class="l wrap">${commonPodHtml}</td>` : '') +
+            (showPostcode ? `<td class="l wrap">${postcodeHtml}</td>` : '') +
             `<td class="l wrap">${topDriverHtml}</td>` +
             `</tr>`;
         });
@@ -8036,17 +8571,20 @@
           `<th class="l" style="width:92px;">Driver</th>` +
           `<th style="width:62px;">Total DNR</th>` +
           (showDriverPod ? `<th class="l">POD Summary</th>` : '') +
+          (showPostcode ? `<th class="l">Postcode</th>` : '') +
           `</tr></thead><tbody>`;
         driverRows.forEach(r => {
           const totHtml = r.records && r.records.length
             ? drDrillWrap(r.total, `${r.station} · ${r.driver} · Total (${r.total})`, r.records, 'dnr')
             : r.total;
           const podSummary = showDriverPod ? drFormatPodSys(r.podSys, showPod, showSys) : '';
+          const pcSummary = showPostcode ? drFormatPostcodeLines(r.postcodes) : '';
           h += `<tr>` +
             `<td class="l dr-dnr-st"><b>${drEsc(r.station)}</b></td>` +
             `<td class="l">${drEsc(r.driver)}</td>` +
             `<td><b>${totHtml}</b></td>` +
             (showDriverPod ? `<td class="l wrap">${podSummary}</td>` : '') +
+            (showPostcode ? `<td class="l wrap">${pcSummary}</td>` : '') +
             `</tr>`;
         });
         h += `</tbody></table>`;
@@ -8071,15 +8609,18 @@
 
             if (cnt > 0) {
               const podList = showDriverPod ? drFormatPodSys(cell.podSys, showPod, showSys) : '';
+              const pcList = showPostcode ? drFormatPostcodeLines(cell.postcodes) : '';
               const cntHtml = drDrillWrap(cnt, `${r.station} · ${r.driver} · ${md} (${cnt})`, cell.records, 'dnr');
               h += `<td class="dr-dnr-cell">` +
                 `<div class="dr-dnr-top"><span>Total ${cntHtml}</span>${diffHtml}</div>` +
                 (showDriverPod ? `<div class="dr-dnr-pods">${podList}</div>` : '') +
+                (showPostcode ? `<div class="dr-dnr-pods">${pcList}</div>` : '') +
                 `</td>`;
             } else {
               h += `<td class="dr-dnr-cell">` +
                 `<div class="dr-dnr-top"><span class="dr-dnr-zero">Total 0</span>${diffHtml}</div>` +
                 (showDriverPod ? `<div class="dr-dnr-pods">-</div>` : '') +
+                (showPostcode ? `<div class="dr-dnr-pods">-</div>` : '') +
                 `</td>`;
             }
           });
@@ -9268,6 +9809,14 @@
         totalRow: currentTotalRow || null,
         driverData: currentDriverData || [],
         driverTotal: currentDriverTotal || null,
+        dailyRankBlocks: dailyRankBlocks || {},
+        dailyRankDates: dailyRankDates || [],
+        selectedRankDate: selectedRankDate || '',
+        rankViewMode: rankViewMode || 'single',
+        selectedDailyDates: selectedDailyDates || [],
+        showRankRespCol: Boolean(showRankRespCol),
+        rankGroupMap: rankGroupMap || {},
+        monthRankData: monthRankData || null,
         dnrStats: dnrStats || { total: 0, excluded: 0, remained: 0, hasData: false },
         rankSourceMap: rankSourceMap || { lost: [], dnr: [] },
         trackingMap: trackingMap || {},
@@ -9372,6 +9921,14 @@
         dnrStats = rankData.dnrStats || { total: 0, excluded: 0, remained: 0, hasData: false };
         rankSourceMap = rankData.rankSourceMap || { lost: [], dnr: [] };
         trackingMap = rankData.trackingMap || {};
+        dailyRankBlocks = rankData.dailyRankBlocks || {};
+        dailyRankDates = rankData.dailyRankDates || [];
+        selectedRankDate = rankData.selectedRankDate || (dailyRankDates.length ? dailyRankDates[dailyRankDates.length - 1] : '');
+        rankViewMode = rankData.rankViewMode || 'single';
+        selectedDailyDates = rankData.selectedDailyDates || [...dailyRankDates];
+        showRankRespCol = Boolean(rankData.showRankRespCol);
+        rankGroupMap = rankData.rankGroupMap || {};
+        monthRankData = rankData.monthRankData || null;
         userEditedAnalysis = Boolean(rankData.userEditedAnalysis);
 
         const rType = rankData.reportType || 'daily';
