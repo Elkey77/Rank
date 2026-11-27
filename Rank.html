@@ -1246,6 +1246,13 @@
     body { padding: 0.75rem 1rem 2rem; }
     body.view-daily { padding: 0.5rem 0.5rem 1.5rem; }
     body.viewer-locked { padding: 0.5rem 0.5rem 1.5rem; }
+    @media (min-width: 901px) {
+      body.view-daily,
+      body.viewer-locked {
+        padding-left: 3cm;
+        padding-right: 3cm;
+      }
+    }
     body.view-daily #rank-container { display: none; }
     #daily-view { display: none; }
     body.view-daily #daily-view { display: flex; }
@@ -1340,34 +1347,42 @@
     .dr-toolbar .btn { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
     #dr-report-frame {
       background: #ffffff; color: #0f172a; padding: 6px; border-radius: 8px;
-      font-size: 11px; max-width: 740px; margin: 0 auto;
+      font-size: 11px; width: 100%; max-width: 740px; margin: 0 auto;
+      box-sizing: border-box;
       box-shadow: 0 2px 10px rgba(0,0,0,0.06);
     }
     #dr-report-frame.is-station {
-      max-width: 560px;
+      width: 100%;
+      max-width: 100%;
+    }
+    #dr-report-frame.is-station .dr-sec {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
     #dr-report-frame.is-station .dr-col-dnr { min-width: 90px; max-width: 140px; }
     #dr-report-frame.is-station .dr-col-2cm { max-width: 64px; min-width: 42px; }
     #dr-report-frame.is-region {
-      max-width: 60%;
-      width: 60%;
+      max-width: 100%;
+      width: 100%;
       padding: 4px;
       margin: 0 auto;
       overflow-x: auto;
+      box-sizing: border-box;
     }
     #dr-report-frame.is-dnr {
-      max-width: 60%;
-      width: 60%;
+      max-width: 100%;
+      width: 100%;
       padding: 4px;
       margin: 0 auto;
       overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
       box-sizing: border-box;
     }
     #dr-report-frame.is-dnr .dr-banner { padding: 4px 8px; font-size: 13px; }
     #dr-report-frame.is-dnr .dr-dates { padding: 2px 6px; margin-bottom: 4px; font-size: 10px; }
     #dr-report-frame.is-dnr .dr-table {
       font-size: 9px;
-      table-layout: fixed;
+      table-layout: auto;
       width: 100%;
     }
     #dr-report-frame.is-dnr .dr-table th,
@@ -1429,8 +1444,9 @@
     }
     .dr-region-layout.has-todo #dr-report-frame.is-region {
       margin: 0;
-      flex: 0 1 60%;
-      width: 60%;
+      flex: 1 1 auto;
+      width: auto;
+      min-width: 0;
       max-width: calc(100% - 220px);
     }
     #dr-region-todo-panel {
@@ -1524,7 +1540,7 @@
     #dr-report-frame.is-region .dr-banner { padding: 4px 8px; font-size: 13px; }
     #dr-report-frame.is-region .dr-dates { padding: 2px 6px; margin-bottom: 4px; font-size: 10px; }
     #dr-report-frame.is-region .dr-sec { margin: 2px 0 0; max-height: 75vh; overflow: auto; }
-    #dr-report-frame.is-region .dr-table { font-size: 9px; table-layout: fixed; width: 100%; }
+    #dr-report-frame.is-region .dr-table { font-size: 9px; table-layout: fixed; width: 100%; min-width: 640px; }
     #dr-report-frame.is-region .dr-table th,
     #dr-report-frame.is-region .dr-table td { padding: 1.5px 2px; line-height: 1.18; vertical-align: top; }
     #dr-report-frame.is-region .dr-table thead th { position: sticky; top: 0; z-index: 3; }
@@ -1568,6 +1584,81 @@
     .dr-table td.dr-zero { color: #94a3b8; }
     .dr-empty { font-size: 11px; color: #64748b; padding: 3px 6px; border: 1px dashed #cbd5e1; }
     .dr-foot { margin-top: 6px; font-size: 9.5px; color: #64748b; }
+
+    /* Responsive layout for Region, DNR, and Station reports */
+    @media (max-width: 900px) {
+      .dr-region-layout {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #dr-report-frame.is-region,
+      .dr-region-layout.has-todo #dr-report-frame.is-region,
+      #dr-report-frame.is-dnr {
+        width: 100%;
+        max-width: 100%;
+        flex: none;
+      }
+      #dr-region-todo-panel {
+        width: 100%;
+        max-width: 100%;
+        flex: none;
+      }
+      #dr-region-todo-panel .dr-sec {
+        max-height: 45vh;
+      }
+    }
+
+    @media (max-width: 768px) {
+      body.view-daily,
+      body.viewer-locked {
+        padding: 0.35rem 0.35rem 1.25rem;
+      }
+      .dr-sub-nav {
+        padding: 6px 8px;
+      }
+      .dr-toolbar {
+        gap: 0.4rem;
+      }
+      #dr-report-frame.is-station {
+        width: 100%;
+        max-width: 100%;
+      }
+      #dr-report-frame.is-station .dr-sec {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      #dr-report-frame.is-region .dr-sec {
+        max-height: none;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      #dr-report-frame.is-region .dr-table {
+        min-width: 640px;
+      }
+      #dr-report-frame.is-dnr {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      #dr-report-frame.is-dnr .dr-table {
+        table-layout: auto;
+        width: 100%;
+      }
+      #dr-report-frame.is-dnr .dr-table th,
+      #dr-report-frame.is-dnr .dr-table td {
+        min-width: 48px;
+      }
+    }
+
+    @media (max-width: 540px) {
+      #dr-report-frame.is-station .dr-backlog-grid,
+      #dr-report-frame.is-station .dr-backlog-grid.is-row2 {
+        grid-template-columns: 1fr;
+      }
+      #dr-report-frame.is-station .dr-backlog-col {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+    }
 
     /* ===================== Data Center & Viewer Mode ===================== */
     .dc-wrap {
@@ -6712,7 +6803,7 @@
       const yDnr = drPrevWeekday(today);          // DNR rule
       const sysToday = drLocalToday();            // System calendar today for Pending Deadline
       const sysYest = drAddDays(sysToday, -1);
-      const sysWillStart = drAddDays(sysToday, 1);
+      const sysWillStart = sysToday;
       const sysWillEnd = drAddDays(sysToday, 2);
       const st = new Map();
       const warnings = [];
